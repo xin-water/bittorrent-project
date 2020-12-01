@@ -1,0 +1,7 @@
+
+[workspace]
+members=[
+    "bittorrent-client-demo",
+    "bittorrent-client",
+    "bittorrent-protocol",
+]
