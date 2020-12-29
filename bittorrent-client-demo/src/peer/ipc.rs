@@ -1,4 +1,3 @@
-
 use super::message::Message;
 
 #[derive(Clone, Debug)]

@@ -12,17 +12,17 @@ pub fn start(port: u16, download_mutex: Arc<Mutex<Download>>) -> JoinHandle<()> 
         for stream in tcp_listener.incoming() {
             match stream {
                 Ok(s) => handle_connection(s, download_mutex.clone()),
-                Err(e) => println!("Error: {:?}", e)
+                Err(e) => println!("Error: {:?}", e),
             }
         }
     })
 }
 
 fn handle_connection(stream: TcpStream, download_mutex: Arc<Mutex<Download>>) {
-    thread::spawn(move || {
-        match peer_connection::accept(stream, download_mutex) {
+    thread::spawn(
+        move || match peer_connection::accept(stream, download_mutex) {
             Ok(_) => println!("Peer done"),
-            Err(e) => println!("Error: {:?}", e)
-        }
-    });
+            Err(e) => println!("Error: {:?}", e),
+        },
+    );
 }

@@ -1,17 +1,16 @@
-
 #[macro_use]
 extern crate hex_literal;
 
-use std::{any, convert, thread};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use std::{any, convert, thread};
 
-use clap::{App,Arg};
+use clap::{App, Arg};
 use rand::Rng;
 
-mod hash;
 mod decoder;
+mod hash;
 mod meta_info;
 mod tracker;
 mod tracker_response;
@@ -22,10 +21,9 @@ mod request_queue;
 mod listener;
 mod peer;
 
-
-use crate::tracker_response::Peer;
-use crate::peer::download::{self,Download};
+use crate::peer::download::{self, Download};
 use crate::peer::peer_connection;
+use crate::tracker_response::Peer;
 
 const PEER_ID_PREFIX: &'static str = "-btX001-";
 
@@ -36,23 +34,27 @@ fn main() {
     // }).unwrap();
 
     // parse command-line arguments & options
-    let matches= App::new("bittorrent")
-                            .version("0.1.0-alpha")
-                            .author("xinwater")
-                            .about("a bittorrent client")
-                            .arg(Arg::with_name("PORT")
-                                .short("p")
-                                .long("port")
-                                .help("set listen port ,default 6881")
-                                .takes_value(true))
-                            .arg(Arg::with_name("FILE")
-                                .index(1)
-                                .help("Sets the bittorrent file to use")
-                                .required(true))
-                            .get_matches();
+    let matches = App::new("bittorrent")
+        .version("0.1.0-alpha")
+        .author("xinwater")
+        .about("a bittorrent client")
+        .arg(
+            Arg::with_name("PORT")
+                .short("p")
+                .long("port")
+                .help("set listen port ,default 6881")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("FILE")
+                .index(1)
+                .help("Sets the bittorrent file to use")
+                .required(true),
+        )
+        .get_matches();
 
     //设置端口
-    let port:u16 = matches.value_of("PORT").unwrap_or("6881").parse().unwrap();
+    let port: u16 = matches.value_of("PORT").unwrap_or("6881").parse().unwrap();
 
     // 获取文件名
     let filename = matches.value_of("FILE").unwrap();
@@ -72,8 +74,8 @@ fn run(filename: &str, listener_port: u16) -> Result<(), Error> {
     let torrent = meta_info::parse(filename).unwrap();
 
     // connect to tracker and download list of peers
-     let mut peers = Vec::new();
-     peers = tracker::get_peers(&our_peer_id, &torrent, listener_port).unwrap();
+    let mut peers = Vec::new();
+    peers = tracker::get_peers(&our_peer_id, &torrent, listener_port).unwrap();
 
     // let mut peer = Peer::defalut();
     // peer.ip = Ipv4Addr::new(5, 135, 186, 68);
@@ -101,20 +103,20 @@ fn run(filename: &str, listener_port: u16) -> Result<(), Error> {
     // spawn thread to listen for incoming request
     listener::start(listener_port, downloader_mutex.clone());
 
-
     // spawn threads to connect to peers and start the download
-    let peer_threads: Vec<JoinHandle<()>> = peers.into_iter().map(|peer| {
-        thread::sleep(Duration::from_secs(2));
-        let mutex = downloader_mutex.clone();
-        println!("\npeer:{:?}", peer);
-        let peer_thread = thread::spawn(move || {
-            match peer_connection::connect(&peer, mutex) {
+    let peer_threads: Vec<JoinHandle<()>> = peers
+        .into_iter()
+        .map(|peer| {
+            thread::sleep(Duration::from_secs(2));
+            let mutex = downloader_mutex.clone();
+            println!("\npeer:{:?}", peer);
+            let peer_thread = thread::spawn(move || match peer_connection::connect(&peer, mutex) {
                 Ok(_) => println!("Peer done"),
-                Err(e) => println!("链接失败: {:?}", e)
-            }
-        });
-        peer_thread
-    }).collect();
+                Err(e) => println!("链接失败: {:?}", e),
+            });
+            peer_thread
+        })
+        .collect();
 
     // loop {
     //     thread::sleep(Duration::from_secs(60));
@@ -156,7 +158,6 @@ fn run(filename: &str, listener_port: u16) -> Result<(), Error> {
     //     }
     // }
 
-
     pieces_spilt_thread.join().unwrap();
     // wait for peers to complete
     for thr in peer_threads {
@@ -170,25 +171,23 @@ fn generate_peer_id() -> String {
     let mut data = Vec::new();
 
     for _ in 0..12 {
-        let num:u8=  rng.gen_range(0,3);
+        let num: u8 = rng.gen_range(0, 3);
 
         if num == 0 {
             let temp: u8 = rng.gen_range(97, 122);
             data.push(temp);
-        }else if  num == 1 {
+        } else if num == 1 {
             let temp: u8 = rng.gen_range(65, 90);
             data.push(temp);
-        }else {
+        } else {
             let temp: u8 = rng.gen_range(48, 57);
             data.push(temp);
         }
-
     }
     let mut peer_id_prefix = String::from(PEER_ID_PREFIX);
     let v = String::from_utf8(data).unwrap();
     format!("{}{}", peer_id_prefix, v)
 }
-
 
 #[derive(Debug)]
 pub enum Error {

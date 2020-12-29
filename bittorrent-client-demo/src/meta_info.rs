@@ -1,16 +1,16 @@
-use std::{fs};
-use std::io::{Read};
+use std::fs;
+use std::io::Read;
 
 use bencode;
-use bencode::{Bencode, FromBencode};
 use bencode::util::ByteString;
-use sha1::Sha1;
+use bencode::{Bencode, FromBencode};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
+use sha1::Sha1;
 
 use crate::decoder;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct  Info{
+pub struct Info {
     pub name: String,
     pub length: Option<u64>,
     pub files: Option<Vec<File>>,
@@ -56,20 +56,19 @@ pub struct MetaInfo {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Node(String, u64);
 
-
 impl FromBencode for MetaInfo {
     type Err = decoder::Error;
 
     fn from_bencode(bencode: &bencode::Bencode) -> Result<MetaInfo, decoder::Error> {
         match bencode {
-            &Bencode::Dict(ref m) =>{
+            &Bencode::Dict(ref m) => {
                 let info_bytes = get_field_as_bencoded_bytes!(m, "info");
                 let mut sha = Sha1::new();
                 sha.update(&info_bytes);
                 let info_hash = sha.digest().bytes().to_vec();
-                let info_hash_hex=sha.digest().to_string();
-                let hex=percent_encode(&info_hash, NON_ALPHANUMERIC).to_string();
-                let mut torrent = MetaInfo{
+                let info_hash_hex = sha.digest().to_string();
+                let hex = percent_encode(&info_hash, NON_ALPHANUMERIC).to_string();
+                let mut torrent = MetaInfo {
                     announce: get_field!(m, "announce"),
                     announce_list: get_field!(m, "announce-list"),
                     nodes: get_field!(m, "nodes"),
@@ -85,7 +84,7 @@ impl FromBencode for MetaInfo {
                 };
                 Ok(torrent)
             }
-            _ => Err(decoder::Error::NotADict)
+            _ => Err(decoder::Error::NotADict),
         }
     }
 }
@@ -99,11 +98,11 @@ impl FromBencode for Node {
                 // let pieces_bytes = get_field_as_bytes!(m, "nodes");
                 let node = Node {
                     0: String::from("node"),
-                    1: 100
+                    1: 100,
                 };
                 Ok(node)
             }
-            _ => Err(decoder::Error::NotADict)
+            _ => Err(decoder::Error::NotADict),
         }
     }
 }
@@ -118,23 +117,22 @@ impl FromBencode for Info {
                 let piece_list: Vec<Vec<u8>> = pieces.chunks(20).map(|v| v.to_owned()).collect();
                 let num_pieces = piece_list.len() as u32;
 
-               let length= get_field!(m, "length");
-               let files:Option<Vec<File>>= get_field!(m, "files");
+                let length = get_field!(m, "length");
+                let files: Option<Vec<File>> = get_field!(m, "files");
 
-                let size=match length{
-                    Some(_)=>length.clone(),
-                    None=>{
-                          let mut file_size=0_u64;
-                          match &files{
-                             Some(f)=>  {
-                                 for file in f {
-                                     file_size += file.length;
-                                 }
-                                 Some(file_size)
-                             }
-                             None=>None
-                          }
-
+                let size = match length {
+                    Some(_) => length.clone(),
+                    None => {
+                        let mut file_size = 0_u64;
+                        match &files {
+                            Some(f) => {
+                                for file in f {
+                                    file_size += file.length;
+                                }
+                                Some(file_size)
+                            }
+                            None => None,
+                        }
                     }
                 };
                 let info = Info {
@@ -144,62 +142,57 @@ impl FromBencode for Info {
                     size,
                     piece_length: get_field!(m, "piece length").unwrap(),
                     pieces: pieces,
-                    piece_list:Some(piece_list),
+                    piece_list: Some(piece_list),
                     num_pieces: Some(num_pieces),
                     md5sum: get_field!(m, "md5sum"),
                     private: get_field!(m, "private"),
                     path: get_field!(m, "path"),
-                    root_hash:get_field!(m, "root_hash"),
+                    root_hash: get_field!(m, "root_hash"),
                 };
                 Ok(info)
             }
-            _ => Err(decoder::Error::NotADict)
+            _ => Err(decoder::Error::NotADict),
         }
     }
 }
 
- impl FromBencode for File {
-     type Err = decoder::Error;
+impl FromBencode for File {
+    type Err = decoder::Error;
 
-     fn from_bencode(bencode: &bencode::Bencode) -> Result<File, decoder::Error> {
-         match bencode {
-             &Bencode::Dict(ref m) => {
-                 // let pieces_bytes = get_field_as_bytes!(m, "pieces");
-                 let file =  File {
-                     path: get_field!(m, "path").unwrap(),
-                     length: get_field!(m, "length").unwrap(),
-                     md5sum: get_field!(m, "md5sum"),
-                 };
+    fn from_bencode(bencode: &bencode::Bencode) -> Result<File, decoder::Error> {
+        match bencode {
+            &Bencode::Dict(ref m) => {
+                // let pieces_bytes = get_field_as_bytes!(m, "pieces");
+                let file = File {
+                    path: get_field!(m, "path").unwrap(),
+                    length: get_field!(m, "length").unwrap(),
+                    md5sum: get_field!(m, "md5sum"),
+                };
 
-                 Ok(file)
-             }
-             _ => Err(decoder::Error::NotADict)
-         }
-     }
+                Ok(file)
+            }
+            _ => Err(decoder::Error::NotADict),
+        }
+    }
 }
 
-#[derive( Debug)]
-pub enum Error{
+#[derive(Debug)]
+pub enum Error {
     DecodeError(),
-    IoError()
+    IoError(),
 }
-
-
-
 
 pub fn parse(filename: &str) -> Result<MetaInfo, decoder::Error> {
-
     // read the torrent file into a byte vector
     let mut f = fs::File::open(filename).expect("load file fail");
     let mut v = Vec::new();
     f.read_to_end(&mut v).unwrap();
 
     let bencode = bencode::from_vec(v).unwrap();
-    let mut result:MetaInfo = FromBencode::from_bencode(&bencode).unwrap();
+    let mut result: MetaInfo = FromBencode::from_bencode(&bencode).unwrap();
     render_torrent(&result);
     Ok(result)
 }
-
 
 fn render_torrent(torrent: &MetaInfo) {
     // println!("announce:\t{:?}", torrent.announce);

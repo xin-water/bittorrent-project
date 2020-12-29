@@ -1,23 +1,22 @@
-use std::{any, convert, fmt, io, thread};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream, SocketAddr};
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{channel, Receiver, RecvError, Sender, SendError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::panic;
+use std::sync::mpsc::{channel, Receiver, RecvError, SendError, Sender};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{any, convert, fmt, io, thread};
 
-use rand::{self,Rng};
+use rand::{self, Rng};
 
-use crate::tracker_response::Peer;
 use crate::request_queue::RequestQueue;
+use crate::tracker_response::Peer;
 
 use super::download;
-use super::download::{BLOCK_SIZE, Download};
-use super::message::Message;
+use super::download::{Download, BLOCK_SIZE};
 use super::ipc::IPC;
+use super::message::Message;
 use crate::peer::util;
-
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
 const MAX_CONCURRENT_REQUESTS: u32 = 10;
@@ -61,7 +60,11 @@ impl PeerConnection {
         PeerConnection::new(stream, download_mutex, false)
     }
 
-    fn new(stream: TcpStream, download_mutex: Arc<Mutex<Download>>, send_handshake_first: bool) -> Result<(), Error> {
+    fn new(
+        stream: TcpStream,
+        download_mutex: Arc<Mutex<Download>>,
+        send_handshake_first: bool,
+    ) -> Result<(), Error> {
         let mut request;
         loop {
             if let Ok(mut download) = download_mutex.lock() {
@@ -110,7 +113,12 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn run(mut self, send_handshake_first: bool, incoming_rx: Receiver<IPC>, outgoing_rx: Receiver<Message>) -> Result<(), Error> {
+    fn run(
+        mut self,
+        send_handshake_first: bool,
+        incoming_rx: Receiver<IPC>,
+        outgoing_rx: Receiver<Message>,
+    ) -> Result<(), Error> {
         if send_handshake_first {
             self.send_handshake()?;
             self.receive_handshake()?;
@@ -209,16 +217,18 @@ impl PeerConnection {
             IPC::BlockComplete(piece_index, block_index) => {
                 self.to_request.remove(&(piece_index, block_index));
                 match self.me.requests.remove(piece_index, block_index) {
-                    Some(r) => self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length)),
-                    None => Ok(())
+                    Some(r) => {
+                        self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length))
+                    }
+                    None => Ok(()),
                 }
-            },
+            }
             IPC::PieceComplete(piece_index) => {
                 self.me.has_pieces[piece_index as usize] = true;
                 self.update_my_interested_status()?;
                 self.send_message(Message::Have(piece_index))?;
                 Ok(())
-            },
+            }
             IPC::CatComplete => {
                 println!("分割完成");
                 let mut request;
@@ -241,23 +251,23 @@ impl PeerConnection {
                             self.queue_blocks(have_index as u32);
                             // println!("process CatComplete: 添加:{}片{}个任务到请求队列", have_index, );
                         }
-                        _ => { break }
+                        _ => break,
                     }
                 }
                 self.update_my_interested_status()?;
                 self.request_more_blocks()?;
                 Ok(())
-            },
+            }
             IPC::DownloadComplete => {
                 self.halt = true;
                 self.update_my_interested_status()?;
                 Ok(())
-            },
+            }
             IPC::BlockUploaded => {
                 self.upload_in_progress = false;
                 self.upload_next_block()?;
                 Ok(())
-            },
+            }
             IPC::Downstream_Error => {
                 loop {
                     if let Ok(mut download) = self.download_mutex.lock() {
@@ -266,7 +276,7 @@ impl PeerConnection {
                     }
                 }
                 Ok(())
-            },
+            }
             IPC::Upstream_Error => {
                 loop {
                     if let Ok(mut download) = self.download_mutex.lock() {
@@ -275,7 +285,7 @@ impl PeerConnection {
                     }
                 }
                 Ok(())
-            },
+            }
         }
     }
 
@@ -284,20 +294,20 @@ impl PeerConnection {
         match message {
             Message::Choke => {
                 self.me.is_choked = true;
-            },
+            }
             Message::Unchoke => {
                 if self.me.is_choked {
                     self.me.is_choked = false;
                     self.request_more_blocks()?;
                 }
-            },
+            }
             Message::Interested => {
                 self.them.is_interested = true;
                 self.unchoke_them()?;
-            },
+            }
             Message::NotInterested => {
                 self.them.is_interested = false;
-            },
+            }
             Message::Have(have_index) => {
                 self.them.has_pieces[have_index as usize] = true;
                 if self.cat_status {
@@ -305,7 +315,7 @@ impl PeerConnection {
                     self.update_my_interested_status()?;
                     self.request_more_blocks()?;
                 }
-            },
+            }
             Message::Bitfield(bytes) => {
                 for have_index in 0..self.them.has_pieces.len() {
                     let bytes_index = have_index / 8;
@@ -326,35 +336,42 @@ impl PeerConnection {
                             self.un_cat_num_list.push(have_index);
                         }
                     }
-                };
+                }
                 //添加self.request_size个块到请求队列,以免阻塞太长时间.
                 for i in 0..self.request_size {
                     match self.cat_num_list.pop() {
                         Some(have_index) => {
                             println!("{:?}----------process_message Bitfield:将对方有,而我可能没有的第:{}块中{}个任务添加到请求队列", self.stream.peer_addr(), have_index, self.queue_blocks(have_index as u32));
                         }
-                        _ => { break }
+                        _ => break,
                     }
                 }
                 self.update_my_interested_status()?;
                 self.request_more_blocks()?;
-            },
+            }
             Message::Request(piece_index, offset, length) => {
                 let block_index = offset / BLOCK_SIZE;
-                self.them.requests.add(piece_index, block_index, offset, length);
+                self.them
+                    .requests
+                    .add(piece_index, block_index, offset, length);
                 self.upload_next_block()?;
-            },
+            }
             Message::Piece(piece_index, offset, data) => {
                 self.download_size += data.len();
                 let block_index = offset / BLOCK_SIZE;
                 self.me.requests.remove(piece_index, block_index);
                 loop {
                     if let Ok(mut download) = self.download_mutex.lock() {
-                        download.store(self.stream.peer_addr().unwrap(), (self.download_size as f64 / 1024.0 / 1024.0), piece_index, block_index, data)?;
+                        download.store(
+                            self.stream.peer_addr().unwrap(),
+                            (self.download_size as f64 / 1024.0 / 1024.0),
+                            piece_index,
+                            block_index,
+                            data,
+                        )?;
                         break;
                     }
                 }
-
 
                 //TODO
                 // 每完成一块添加一块任务,可能导致任务队列过长,范围过大.不利于集中下载
@@ -366,11 +383,11 @@ impl PeerConnection {
                 // }
                 self.update_my_interested_status()?;
                 self.request_more_blocks()?;
-            },
+            }
             Message::Cancel(piece_index, offset, _) => {
                 let block_index = offset / BLOCK_SIZE;
                 self.them.requests.remove(piece_index, block_index);
-            },
+            }
             Message::KeepAlive => {
                 println!("{:?}:没有任务,刷新分割列表", self.stream.peer_addr());
                 let mut cat_num_list = Vec::new();
@@ -437,9 +454,14 @@ impl PeerConnection {
 
                 self.update_my_interested_status()?;
                 self.request_more_blocks()?;
-                println!("{:?}-----process_message KeepAlive: 添加:第{}块周围{}个任务到请求队列", self.stream.peer_addr(), index, send_num);
-            },
-            _ => return Err(Error::UnknownRequestType(message))
+                println!(
+                    "{:?}-----process_message KeepAlive: 添加:第{}块周围{}个任务到请求队列",
+                    self.stream.peer_addr(),
+                    index,
+                    send_num
+                );
+            }
+            _ => return Err(Error::UnknownRequestType(message)),
         };
         Ok(())
     }
@@ -456,7 +478,10 @@ impl PeerConnection {
 
         for (block_index, block_length) in incomplete_blocks {
             if !self.me.requests.has(piece_index, block_index) {
-                self.to_request.insert((piece_index, block_index), (piece_index, block_index, block_length));
+                self.to_request.insert(
+                    (piece_index, block_index),
+                    (piece_index, block_index, block_length),
+                );
                 num += 1;
             }
         }
@@ -471,7 +496,11 @@ impl PeerConnection {
 
         if self.me.is_interested != am_interested {
             self.me.is_interested = am_interested;
-            let message = if am_interested { Message::Interested } else { Message::NotInterested };
+            let message = if am_interested {
+                Message::Interested
+            } else {
+                Message::NotInterested
+            };
             self.send_message(message)
         } else {
             Ok(())
@@ -479,7 +508,8 @@ impl PeerConnection {
     }
 
     fn send_bitfield(&mut self) -> Result<(), Error> {
-        let mut bytes: Vec<u8> = vec![0; (self.me.has_pieces.len() as f64 / 8 as f64).ceil() as usize];
+        let mut bytes: Vec<u8> =
+            vec![0; (self.me.has_pieces.len() as f64 / 8 as f64).ceil() as usize];
         for have_index in 0..self.me.has_pieces.len() {
             let bytes_index = have_index / 8;
             let index_into_byte = have_index % 8;
@@ -487,13 +517,13 @@ impl PeerConnection {
                 let mask = 1 << (7 - index_into_byte);
                 bytes[bytes_index] |= mask;
             }
-        };
+        }
         self.send_message(Message::Bitfield(bytes))
     }
 
     fn request_more_blocks(&mut self) -> Result<(), Error> {
         if self.me.is_choked || !self.me.is_interested || self.to_request.len() == 0 {
-            return Ok(())
+            return Ok(());
         }
 
         while self.me.requests.len() < MAX_CONCURRENT_REQUESTS as usize {
@@ -511,7 +541,11 @@ impl PeerConnection {
 
             // add a request
             let offset = block_index * BLOCK_SIZE;
-            if self.me.requests.add(piece_index, block_index, offset, block_length) {
+            if self
+                .me
+                .requests
+                .add(piece_index, block_index, offset, block_length)
+            {
                 self.send_message(Message::Request(piece_index, offset, block_length))?;
             }
         }
@@ -544,8 +578,8 @@ impl PeerConnection {
                 }
                 self.upload_in_progress = true;
                 self.send_message(Message::Piece(r.piece_index, r.offset, data))
-            },
-            None => Ok(())
+            }
+            None => Ok(()),
         }
     }
 }
@@ -575,12 +609,9 @@ struct DownstreamMessageFunnel {
 
 impl DownstreamMessageFunnel {
     fn start(stream: TcpStream, tx: Sender<IPC>) {
-        let mut funnel = DownstreamMessageFunnel {
-            stream,
-            tx,
-        };
+        let mut funnel = DownstreamMessageFunnel { stream, tx };
         match funnel.run() {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 println!("Downstream_Error: {:?}", e);
                 funnel.tx.send(IPC::Downstream_Error).unwrap();
@@ -621,7 +652,7 @@ impl UpstreamMessageFunnel {
             tx: tx.clone(),
         };
         match funnel.run() {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 println!("Upstream-Error: {:?}", e);
                 funnel.tx.send(IPC::Upstream_Error).unwrap();
@@ -635,7 +666,7 @@ impl UpstreamMessageFunnel {
             println!("Upstream_Message:{:?}", &message);
             let is_block_upload = match message {
                 Message::Piece(_, _, _) => true,
-                _ => false
+                _ => false,
             };
 
             // do a blocking write to the TCP stream
@@ -654,7 +685,11 @@ fn read_n(stream: &mut TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, Error> 
     read_n_to_buf(stream, &mut buf, bytes_to_read)?;
     Ok(buf)
 }
-fn read_n_to_buf(stream: &mut TcpStream, buf: &mut Vec<u8>, bytes_to_read: u32) -> Result<(), Error> {
+fn read_n_to_buf(
+    stream: &mut TcpStream,
+    buf: &mut Vec<u8>,
+    bytes_to_read: u32,
+) -> Result<(), Error> {
     if bytes_to_read == 0 {
         return Ok(());
     }
@@ -664,12 +699,9 @@ fn read_n_to_buf(stream: &mut TcpStream, buf: &mut Vec<u8>, bytes_to_read: u32) 
         Ok(0) => Err(Error::SocketClosed),
         Ok(n) if n == bytes_to_read as usize => Ok(()),
         Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32),
-        Err(e) => Err(e)?
+        Err(e) => Err(e)?,
     }
 }
-
-
-
 
 #[derive(Debug)]
 pub enum Error {

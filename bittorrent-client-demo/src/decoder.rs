@@ -1,4 +1,3 @@
-
 #![macro_use]
 use bencode;
 
@@ -6,55 +5,60 @@ use std::{convert, io};
 
 #[macro_export]
 macro_rules! get_field_with_default {
-    ($m:expr, $field:expr, $default:expr) => (
+    ($m:expr, $field:expr, $default:expr) => {
         match $m.get(&ByteString::from_str($field)) {
-            Some(a) => {
-                      match FromBencode::from_bencode(a){
-                          Result::Err(e) => { eprintln!("{:?}",e); None },
-                          Result::Ok(v) => Some(v),
-                      }
+            Some(a) => match FromBencode::from_bencode(a) {
+                Result::Err(e) => {
+                    eprintln!("{:?}", e);
+                    None
+                }
+                Result::Ok(v) => Some(v),
             },
-            None => None
+            None => None,
         }
-    )
+    };
 }
 
 #[macro_export]
 macro_rules! get_field {
-    ($m:expr, $field:expr) => (
-        get_field_with_default!($m, $field, return Err(decoder::Error::DoesntContain($field)))
-    )
+    ($m:expr, $field:expr) => {
+        get_field_with_default!(
+            $m,
+            $field,
+            return Err(decoder::Error::DoesntContain($field))
+        )
+    };
 }
 
 #[macro_export]
 macro_rules! get_optional_field {
-    ($m:expr, $field:expr) => (
+    ($m:expr, $field:expr) => {
         get_field_with_default!($m, $field, None)
-    )
+    };
 }
 
 #[macro_export]
 macro_rules! get_raw_field {
-    ($m:expr, $field:expr) => (
+    ($m:expr, $field:expr) => {
         $m.get(&ByteString::from_str($field))
-    )
+    };
 }
 
 #[macro_export]
 macro_rules! get_field_as_bencoded_bytes {
-    ($m:expr, $field:expr) => (
+    ($m:expr, $field:expr) => {
         get_raw_field!($m, $field).unwrap().to_bytes().unwrap()
-    )
+    };
 }
 
 #[macro_export]
 macro_rules! get_field_as_bytes {
-    ($m:expr, $field:expr) => (
+    ($m:expr, $field:expr) => {
         match get_raw_field!($m, $field).unwrap() {
             &Bencode::ByteString(ref v) => v.clone(),
-            _ => return Err(decoder::Error::NotAByteString)
+            _ => return Err(decoder::Error::NotAByteString),
         }
-    )
+    };
 }
 
 #[derive(Debug)]

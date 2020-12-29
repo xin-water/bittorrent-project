@@ -14,7 +14,13 @@ impl RequestQueue {
         self.position(piece_index, block_index).is_some()
     }
 
-    pub fn add(&mut self, piece_index: u32, block_index: u32, offset: u32, block_length: u32) -> bool {
+    pub fn add(
+        &mut self,
+        piece_index: u32,
+        block_index: u32,
+        offset: u32,
+        block_length: u32,
+    ) -> bool {
         if !self.has(piece_index, block_index) {
             let r = RequestMetadata {
                 piece_index: piece_index,
@@ -42,13 +48,15 @@ impl RequestQueue {
             Some(i) => {
                 let r = self.requests.remove(i);
                 Some(r)
-            },
-            None => None
+            }
+            None => None,
         }
     }
 
     fn position(&self, piece_index: u32, block_index: u32) -> Option<usize> {
-        self.requests.iter().position(|r| r.matches(piece_index, block_index))
+        self.requests
+            .iter()
+            .position(|r| r.matches(piece_index, block_index))
     }
 
     pub fn len(&self) -> usize {
