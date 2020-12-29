@@ -1,37 +1,41 @@
-use std::str::FromStr;
-use std::collections::HashMap;
 use std::collections::hash_map::RandomState;
-use std::net::{UdpSocket, SocketAddr};
-use std::{convert, io};
+use std::collections::HashMap;
 use std::io::Read;
+use std::net::{SocketAddr, UdpSocket};
+use std::str::FromStr;
 use std::time::Duration;
+use std::{convert, io};
 
 use rand::Rng;
 
 use reqwest;
 
 use crate::meta_info::MetaInfo;
-use crate::tracker_response::{Peer, TrackerResponse};
 use crate::tracker_response;
+use crate::tracker_response::{Peer, TrackerResponse};
 
-pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Result<Vec<Peer>, TrackerError> {
+pub fn get_peers(
+    peer_id: &str,
+    torrent: &MetaInfo,
+    listener_port: u16,
+) -> Result<Vec<Peer>, TrackerError> {
     let length_string = torrent.info.size.unwrap().to_string();
     let listener_port_string = listener_port.to_string();
     let mut info_hash_ascii = torrent.info_hash_ascii.clone().unwrap();
 
     /*       //http tracker 参数
-              let link=String::from("http://tracker.opentrackr.org:1337/announce?
-              info_hash=%a7%19%ff%3drc%176%88wmo%b6%dcb%b5%de%3fzp
-              &peer_id=-RC0001-dw1018438366
-              &port=41289
-              &uploaded=0
-              &downloaded=0
-              &left=1670982955
-              &event=started
-              &key=62ECE99D
-              &numwant=200
-              &compact=1");
-     */
+             let link=String::from("http://tracker.opentrackr.org:1337/announce?
+             info_hash=%a7%19%ff%3drc%176%88wmo%b6%dcb%b5%de%3fzp
+             &peer_id=-RC0001-dw1018438366
+             &port=41289
+             &uploaded=0
+             &downloaded=0
+             &left=1670982955
+             &event=started
+             &key=62ECE99D
+             &numwant=200
+             &compact=1");
+    */
 
     let htracker_params = vec![
         ("info_hash", info_hash_ascii.as_str()),
@@ -44,31 +48,30 @@ pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Resul
         // ("key",&peer_id),
         ("event", "started"),
         ("numwant", "200"),
-        ("compact", "1")
+        ("compact", "1"),
     ];
 
-
     /*
-      //udp tracker 参数
+       //udp tracker 参数
 
-      偏移 大小 名称 值
-      0 64位整数 连接ID
-      8 32位整数 动作 1
-      12 32位整数 事务ID
-      16 20字节字符串 特征码(info_hash)
-      36 20字节字符串 客户端ID
-      56 64位整数 已下载
-      64 64位整数 剩余
-      72 64位整数 已上传
-      80 32位整数 事件
-      84 32位整数 IP地址 0
-      88 32位整数 key
-      92 32位整数 num_want -1
-      96 16位整数 端口
-      98
-   */
+       偏移 大小 名称 值
+       0 64位整数 连接ID
+       8 32位整数 动作 1
+       12 32位整数 事务ID
+       16 20字节字符串 特征码(info_hash)
+       36 20字节字符串 客户端ID
+       56 64位整数 已下载
+       64 64位整数 剩余
+       72 64位整数 已上传
+       80 32位整数 事件
+       84 32位整数 IP地址 0
+       88 32位整数 key
+       92 32位整数 num_want -1
+       96 16位整数 端口
+       98
+    */
 
-    let info_hash_hex=torrent.info_hash_hex.clone().unwrap();
+    let info_hash_hex = torrent.info_hash_hex.clone().unwrap();
     let mut utracker_params = HashMap::new();
     utracker_params.insert("info_hash_hex", info_hash_hex.as_str());
     utracker_params.insert("info_hash_ascii", info_hash_ascii.as_str());
@@ -82,7 +85,6 @@ pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Resul
     utracker_params.insert("event", "started");
     utracker_params.insert("numwant", "200");
     utracker_params.insert("compact", "1");
-
 
     let announce_list = match torrent.announce_list.clone() {
         Some(mut v) => v,
@@ -117,7 +119,6 @@ pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Resul
             continue;
         }
 
-
         if addr.starts_with("http") {
             println!("\nhttp track----------------------------------------------");
 
@@ -125,9 +126,10 @@ pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Resul
             println!("link:{}", &link);
             let url = link.as_str();
 
-            let  client =  reqwest::blocking::ClientBuilder::new()
+            let client = reqwest::blocking::ClientBuilder::new()
                 .connect_timeout(Duration::from_millis(1500))
-                .build().unwrap();
+                .build()
+                .unwrap();
 
             match client.get(&link).send() {
                 Err(err) => {
@@ -136,22 +138,22 @@ pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Resul
                 Ok(mut response) => {
                     println!("链接成功,status: {}", response.status());
                     if response.status().is_success() {
-
-                        let mut var =vec![0;1024];
-                        match  response.read(&mut var){
-                            Ok(0) =>{}
-                            Ok(n)=>{
-                                match TrackerResponse::parse(&var[0..n]) {
-                                    Ok(v) => {
-                                        tracker_response_list.push(v);
-                                    }
-                                    _ => {println!("解析错误");}
+                        let mut var = vec![0; 1024];
+                        match response.read(&mut var) {
+                            Ok(0) => {}
+                            Ok(n) => match TrackerResponse::parse(&var[0..n]) {
+                                Ok(v) => {
+                                    tracker_response_list.push(v);
                                 }
+                                _ => {
+                                    println!("解析错误");
+                                }
+                            },
+                            _ => {
+                                println!("读取错误");
                             }
-                            _ => { println!("读取错误");}
                         }
-
-                    }else {
+                    } else {
                         println!("响应错误");
                     }
                 }
@@ -168,22 +170,27 @@ pub fn get_peers(peer_id: &str, torrent: &MetaInfo, listener_port: u16) -> Resul
     Ok(peers)
 }
 
-fn udp_tracker(addr: &str, params_hash: &HashMap<&str, &str, RandomState>, torrent: &MetaInfo) -> Result<TrackerResponse, &'static str> {
+fn udp_tracker(
+    addr: &str,
+    params_hash: &HashMap<&str, &str, RandomState>,
+    torrent: &MetaInfo,
+) -> Result<TrackerResponse, &'static str> {
     let (client, socket_addr) = get_udpsocket(params_hash.get("port").unwrap()).unwrap();
     let mut ws = Ws::new();
     let param = ws.get_param();
     println!("\nudp connect to {}", addr);
     if let Err(_) = client.connect(addr) {
         return Err("\nudp 连接失败");
-
     };
     println!("\nudp 发送握手");
-    if let Err(_) = client.send(param.as_slice()){
+    if let Err(_) = client.send(param.as_slice()) {
         return Err("\nudp 握手失败");
     }
     let mut buffer = [0; 20];
     println!("等待对方响应");
-    client.set_read_timeout(Option::from(Duration::from_secs(3))).unwrap();
+    client
+        .set_read_timeout(Option::from(Duration::from_secs(3)))
+        .unwrap();
     let (num, src) = {
         match client.recv_from(&mut buffer) {
             Ok(v) => v,
@@ -211,7 +218,7 @@ fn udp_tracker(addr: &str, params_hash: &HashMap<&str, &str, RandomState>, torre
     let connect_id: u32 = rand::thread_rng().gen_range(1_00000, 30_0000);
     let announce = announce_param(connect_id, &server_id, &socket_addr, params_hash, torrent);
     println!("发送peer信息");
-    if let Err(_) = client.send(announce.as_slice()){
+    if let Err(_) = client.send(announce.as_slice()) {
         return Err("发送peer信息失败");
     }
     let mut buffer2 = [0; 256];
@@ -228,7 +235,6 @@ fn udp_tracker(addr: &str, params_hash: &HashMap<&str, &str, RandomState>, torre
         // return tracker_response;
         return Err("peer响应长度错误!");
     }
-
 
     if !peer_data[..4].eq(&hex!("00000001")) {
         // return tracker_response;
@@ -261,7 +267,6 @@ fn udp_tracker(addr: &str, params_hash: &HashMap<&str, &str, RandomState>, torre
 
     let upload_num = &peer_data[16..20];
 
-
     let mut peers = Vec::new();
     let mut n = 20;
     for i in 0..(num - 20) / 6 {
@@ -278,10 +283,12 @@ fn udp_tracker(addr: &str, params_hash: &HashMap<&str, &str, RandomState>, torre
 }
 
 fn encode_query_params(params: &[(&str, &str)]) -> String {
-    let param_strings: Vec<String> = params.iter().map(|&(k, v)| format!("{}={}", k, v)).collect();
+    let param_strings: Vec<String> = params
+        .iter()
+        .map(|&(k, v)| format!("{}={}", k, v))
+        .collect();
     param_strings.join("&")
 }
-
 
 #[derive(Debug)]
 struct Ws {
@@ -316,9 +323,8 @@ fn announce_param(
     server_id: &[u8],
     socket_addr: &SocketAddr,
     params_hash: &HashMap<&str, &str, RandomState>,
-    torrent: &MetaInfo
+    torrent: &MetaInfo,
 ) -> Vec<u8> {
-
     let ss = socket_addr.ip().to_string();
     let mut v: Vec<_> = ss.split('.').collect();
     let mut ip: Vec<u8> = Vec::new();
@@ -336,7 +342,12 @@ fn announce_param(
     announce.append(&mut torrent.info_hash.clone().unwrap());
     announce.append(&mut params_hash.get("peer_id").unwrap().to_string().into_bytes());
     announce.append(&mut 0_u64.to_le_bytes().to_vec());
-    announce.append(&mut u64::from_str(params_hash.get("left").unwrap()).unwrap().to_le_bytes().to_vec());
+    announce.append(
+        &mut u64::from_str(params_hash.get("left").unwrap())
+            .unwrap()
+            .to_le_bytes()
+            .to_vec(),
+    );
     announce.append(&mut 0_u64.to_le_bytes().to_vec());
     announce.append(&mut 2_u64.to_le_bytes().to_vec());
     announce.append(&mut ip);
@@ -365,7 +376,7 @@ fn get_udpsocket(port: &str) -> Option<(UdpSocket, SocketAddr)> {
 #[derive(Debug)]
 pub enum TrackerError {
     DecoderError(tracker_response::Error),
-   // HyperError(hyper::Error),
+    // HyperError(hyper::Error),
     IoError(io::Error),
 }
 

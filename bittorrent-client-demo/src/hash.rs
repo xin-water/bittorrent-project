@@ -1,4 +1,3 @@
-
 use crypto::digest::Digest;
 
 pub type Sha1 = Vec<u8>;

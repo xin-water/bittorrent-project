@@ -1,5 +1,5 @@
-use std::fmt;
 use super::util;
+use std::fmt;
 
 #[derive(Clone)]
 pub enum Message {
@@ -30,28 +30,28 @@ impl Message {
                 let offset = util::bytes_to_u32(&body[4..8]);
                 let length = util::bytes_to_u32(&body[8..12]);
                 Message::Request(index, offset, length)
-            },
+            }
             7 => {
                 let index = util::bytes_to_u32(&body[0..4]);
                 let offset = util::bytes_to_u32(&body[4..8]);
                 let data = body[8..].to_owned();
                 Message::Piece(index, offset, data)
-            },
+            }
             8 => {
                 let index = util::bytes_to_u32(&body[0..4]);
                 let offset = util::bytes_to_u32(&body[4..8]);
                 let length = util::bytes_to_u32(&body[8..12]);
                 Message::Cancel(index, offset, length)
-            },
+            }
             9 => Message::Port,
-            _ => panic!("Bad message id: {}", id)
+            _ => panic!("Bad message id: {}", id),
         }
     }
 
     pub(crate) fn serialize(self) -> Vec<u8> {
         let mut payload = vec![];
         match self {
-            Message::KeepAlive => {},
+            Message::KeepAlive => {}
             Message::Choke => payload.push(0),
             Message::Unchoke => payload.push(1),
             Message::Interested => payload.push(2),
@@ -59,29 +59,29 @@ impl Message {
             Message::Have(index) => {
                 payload.push(4);
                 payload.extend(util::u32_to_bytes(index).into_iter());
-            },
+            }
             Message::Bitfield(bytes) => {
                 payload.push(5);
                 payload.extend(bytes);
-            },
+            }
             Message::Request(index, offset, length) => {
                 payload.push(6);
                 payload.extend(util::u32_to_bytes(index).into_iter());
                 payload.extend(util::u32_to_bytes(offset).into_iter());
                 payload.extend(util::u32_to_bytes(length).into_iter());
-            },
+            }
             Message::Piece(index, offset, data) => {
                 payload.push(6);
                 payload.extend(util::u32_to_bytes(index).into_iter());
                 payload.extend(util::u32_to_bytes(offset).into_iter());
                 payload.extend(data);
-            },
+            }
             Message::Cancel(index, offset, length) => {
                 payload.push(8);
                 payload.extend(util::u32_to_bytes(index).into_iter());
                 payload.extend(util::u32_to_bytes(offset).into_iter());
                 payload.extend(util::u32_to_bytes(length).into_iter());
-            },
+            }
             Message::Port => payload.push(9),
         };
 
@@ -102,12 +102,16 @@ impl fmt::Debug for Message {
             Message::NotInterested => write!(f, "NotInterested"),
             Message::Have(ref index) => write!(f, "Have({})", index),
             Message::Bitfield(ref bytes) => write!(f, "Bitfield({:?})", bytes),
-            Message::Request(ref index, ref offset, ref length) => write!(f, "Request({}, {}, {})", index, offset, length),
-            Message::Piece(ref index, ref offset, ref data) => write!(f, "Piece({}, {}, size={})", index, offset, data.len()),
-            Message::Cancel(ref index, ref offset, ref length) => write!(f, "Cancel({}, {}, {})", index, offset, length),
+            Message::Request(ref index, ref offset, ref length) => {
+                write!(f, "Request({}, {}, {})", index, offset, length)
+            }
+            Message::Piece(ref index, ref offset, ref data) => {
+                write!(f, "Piece({}, {}, size={})", index, offset, data.len())
+            }
+            Message::Cancel(ref index, ref offset, ref length) => {
+                write!(f, "Cancel({}, {}, {})", index, offset, length)
+            }
             Message::Port => write!(f, "Port"),
         }
     }
 }
-
-

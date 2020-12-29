@@ -1,8 +1,8 @@
 use std::net::Ipv4Addr;
 
 use bencode;
-use bencode::{Bencode, FromBencode};
 use bencode::util::ByteString;
+use bencode::{Bencode, FromBencode};
 
 use crate::decoder;
 use crate::tracker_response::Error::{decoderError, streamingError};
@@ -25,7 +25,10 @@ impl FromBencode for TrackerResponse {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<TrackerResponse, decoder::Error> {
         match bencode {
             &Bencode::Dict(ref m) => {
-                let mut peers: Vec<Peer> = get_field_as_bytes!(m, "peers").chunks(6).map(Peer::from_bytes).collect();
+                let mut peers: Vec<Peer> = get_field_as_bytes!(m, "peers")
+                    .chunks(6)
+                    .map(Peer::from_bytes)
+                    .collect();
                 let mut is_bad = Some(false);
                 let peer = peers.pop().unwrap();
                 if peer.ip == Ipv4Addr::new(127, 0, 0, 1) {
@@ -47,11 +50,10 @@ impl FromBencode for TrackerResponse {
                 };
                 Ok(response)
             }
-            _ => Err(decoder::Error::NotAByteString)
+            _ => Err(decoder::Error::NotAByteString),
         }
     }
 }
-
 
 impl TrackerResponse {
     pub fn parse(bytes: &[u8]) -> Result<TrackerResponse, Error> {
@@ -83,17 +85,15 @@ impl TrackerResponse {
     pub fn new(bytes: &[u8]) -> Result<TrackerResponse, decoder::Error> {
         let peer = Peer::from_bytes(bytes);
         let peers: Vec<Peer> = vec![peer];
-        Ok(
-            TrackerResponse {
-                interval: 1,
-                min_interval: None,
-                complete: Some(3),
-                incomplete: Some(4),
-                peers_u8: None,
-                peers: Some(peers),
-                is_bad: Some(false),
-            }
-        )
+        Ok(TrackerResponse {
+            interval: 1,
+            min_interval: None,
+            complete: Some(3),
+            incomplete: Some(4),
+            peers_u8: None,
+            peers: Some(peers),
+            is_bad: Some(false),
+        })
     }
 }
 
@@ -147,4 +147,3 @@ impl From<bencode::streaming::Error> for Error {
         streamingError(err)
     }
 }
-

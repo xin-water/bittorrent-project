@@ -1,5 +1,5 @@
-pub mod util;
 pub mod message;
+pub mod util;
 
 pub mod ipc;
 
