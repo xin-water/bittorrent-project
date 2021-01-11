@@ -1,2 +1,4 @@
 /target
 /.idea
+/bittorrent-protocol/examples_data/download
+/bittorrent-protocol/tests_data

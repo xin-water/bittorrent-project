@@ -1,0 +1,83 @@
+use super::{InMemoryFileSystem, MultiFileDirectAccessor};
+use bittorrent_protocol::disk::{DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage};
+use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
+
+#[test]
+fn positive_add_torrent() {
+    // Create some "files" as random bytes
+    let data_a = (super::random_buffer(50), "/path/to/file/a".into());
+    let data_b = (super::random_buffer(2000), "/path/to/file/b".into());
+    let data_c = (super::random_buffer(0), "/path/to/file/c".into());
+
+    // Create our accessor for our in memory files and create a torrent file for them
+    let files_accessor = MultiFileDirectAccessor::new(
+        "/my/downloads/".into(),
+        vec![data_a.clone(), data_b.clone(), data_c.clone()],
+    );
+    let metainfo_bytes = MetainfoBuilder::new()
+        .set_piece_length(PieceLength::Custom(1024))
+        .build(1, files_accessor, |_| ())
+        .unwrap();
+    let metainfo_file = Metainfo::from_bytes(metainfo_bytes).unwrap();
+
+    // Spin up a disk manager and add our created torrent to it
+    let filesystem = InMemoryFileSystem::new();
+    let disk_manager = DiskManagerBuilder::new().build(filesystem.clone());
+
+    let (mut send, mut recv) = disk_manager.into_parts();
+    send.send(IDiskMessage::AddTorrent(metainfo_file)).unwrap();
+
+    let good_pieces = 0;
+
+    // Run a core loop until we get the TorrentAdded message
+    loop {
+        let msg = recv.next().unwrap();
+
+        match msg {
+            ODiskMessage::TorrentAdded(_) => break,
+            ODiskMessage::FoundGoodPiece(_, _) => good_pieces + 1,
+            unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
+        };
+    }
+
+    assert_eq!(0, good_pieces);
+
+    // Verify file a in file system
+    let mut received_file_a = filesystem.open_file(data_a.1).unwrap();
+    assert_eq!(50, filesystem.file_size(&received_file_a).unwrap());
+
+    let mut received_buffer_a = vec![0u8; 50];
+    assert_eq!(
+        50,
+        filesystem
+            .read_file(&mut received_file_a, 0, &mut received_buffer_a[..])
+            .unwrap()
+    );
+    assert_eq!(vec![0u8; 50], received_buffer_a);
+
+    // Verify file b in file system
+    let mut received_file_b = filesystem.open_file(data_b.1).unwrap();
+    assert_eq!(2000, filesystem.file_size(&received_file_b).unwrap());
+
+    let mut received_buffer_b = vec![0u8; 2000];
+    assert_eq!(
+        2000,
+        filesystem
+            .read_file(&mut received_file_b, 0, &mut received_buffer_b[..])
+            .unwrap()
+    );
+    assert_eq!(vec![0u8; 2000], received_buffer_b);
+
+    // Verify file c in file system
+    let mut received_file_c = filesystem.open_file(data_c.1).unwrap();
+    assert_eq!(0, filesystem.file_size(&received_file_c).unwrap());
+
+    let mut received_buffer_c = vec![0u8; 0];
+    assert_eq!(
+        0,
+        filesystem
+            .read_file(&mut received_file_c, 0, &mut received_buffer_c[..])
+            .unwrap()
+    );
+    assert_eq!(vec![0u8; 0], received_buffer_c);
+}
