@@ -32,8 +32,8 @@ fn main() {
     // stdout.flush().unwrap();
     // let torrent_path = input_lines.next().unwrap().unwrap();
 
+    let torrent_path = "bittorrent-protocol/examples_data/torrent/file.torrent";
     let download_path = "bittorrent-protocol/examples_data/download";
-    let torrent_path = "bittorrent-protocol/examples_data/torrent/node_module.torrent";
 
     let mut torrent_bytes = Vec::new();
     File::open(torrent_path)

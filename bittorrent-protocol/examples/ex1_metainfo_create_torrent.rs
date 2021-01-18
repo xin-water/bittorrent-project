@@ -22,8 +22,8 @@ fn main() {
     // output.flush().unwrap();
     // let dst_path = input_lines.next().unwrap().unwrap();
 
-    let src_path = "/home/xinwater/Downloads/node_modules.tar.xz";
-    let dst_path = "bittorrent-protocol/examples_data/torrent/node_module.torrent";
+    let src_path = "bittorrent-protocol/examples_data/file/test_file.txt";
+    let dst_path = "bittorrent-protocol/examples_data/torrent/file.torrent";
 
     match create_torrent(&src_path) {
         Ok(bytes) => {

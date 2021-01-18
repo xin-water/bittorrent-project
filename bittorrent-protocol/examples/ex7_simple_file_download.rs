@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{self,Sender, Receiver};
+
 use std::sync::{Arc,Mutex};
 use chrono::Local;
 use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
@@ -18,6 +19,8 @@ use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
 use bittorrent_protocol::metainfo::{Info, Metainfo};
 use bittorrent_protocol::util::bt::PeerId;
 
+use bittorrent_protocol::handshake::{HandshakerManagerBuilder, Extensions, Extension, InitiateMessage, Protocol, HandshakerConfig};
+use bittorrent_protocol::handshake::transports::TcpTransport;
 
 use bittorrent_protocol::peer::messages::{
     BitFieldMessage, HaveMessage, PeerWireProtocolMessage, PieceMessage, RequestMessage,
@@ -31,8 +34,6 @@ use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{
     Block, BlockMetadata, BlockMut, DiskManagerBuilder, IDiskMessage, ODiskMessage,
 };
-use std::sync::mpsc;
-use bittorrent_protocol::handshake::{BTPeer, BTHandshaker, Handshaker};
 
 /*
     Things this example doesnt do, because of the lack of bittorrent_protocol_select:
@@ -95,7 +96,7 @@ fn main() {
     let file = match matches.value_of("file") {
         Some(s) => s,
         None => {
-            "bittorrent-protocol/examples_data/torrent/node_module.torrent"
+            "bittorrent-protocol/examples_data/torrent/file.torrent"
         }
     };
 
@@ -123,12 +124,30 @@ fn main() {
     let info_hash = metainfo.info().info_hash();
     println!("info-hash:{:?}", hex::encode(&info_hash));
 
+    let peer_id = (*b"-UT2060-000000000000").into();
+
+    // Activate the extension protocol via the handshake bits
+    let mut extensions = Extensions::new();
+    extensions.add(Extension::ExtensionProtocol);
 
     // Create a handshaker that can initiate connections with peers
-    let (handshaker_send, handshaker_recv): (Sender<BTPeer>, Receiver<BTPeer>) = mpsc::channel();
-    let peer_id = (*b"-UT2060-000000000000").into();
-    let mut handshaker = BTHandshaker::new(handshaker_send, "127.0.0.1:0".parse().unwrap(), peer_id).unwrap();
-    handshaker.register_hash(info_hash);
+    // Create a handshaker that can initiate connections with peers
+    let (mut handshaker_send, mut handshaker_recv) = HandshakerManagerBuilder::new()
+        .with_peer_id(peer_id)
+        // We would ideally add a filter to the handshaker to block
+        // peers when we have enough of them for a given hash, but
+        // since this is a minimal example, we will rely on peer
+        // manager backpressure (handshaker -> peer manager will
+        // block when we reach our max peers). Setting these to low
+        // values so we dont have more than 2 unused tcp connections.
+        .with_config(
+            HandshakerConfig::default()
+                .with_wait_buffer_size(0)
+                .with_done_buffer_size(0),
+        )
+        .build(TcpTransport) // Will handshake over TCP (could swap this for UTP in the future)
+        .unwrap()
+        .into_parts();
 
     // Create a peer manager that will hold our peers and heartbeat/send messages to them
     let (mut peer_manager_send, mut peer_manager_recv) = PeerManagerBuilder::new()
@@ -162,13 +181,15 @@ fn main() {
     // Hook up a future that feeds incoming (handshaken) peers over to the peer manager
     let mut handshark_peer_manager_send = peer_manager_send.clone();
     std::thread::spawn(move ||{
-        let (peer,hash,pid) = handshaker_recv.recv().unwrap().destory();
 
-        // Create our peer identifier used by our peer manager
-        let peer_info = PeerInfo::new(peer.peer_addr().unwrap(), pid, hash);
+            let (_, extensions, hash, pid, addr, sock) = handshaker_recv.poll().unwrap().into_parts();
 
-        // Map to a message that can be fed to our peer manager
-        handshark_peer_manager_send.send(IPeerManagerMessage::AddPeer(peer_info, peer));
+            // Create our peer identifier used by our peer manager
+            let peer_info = PeerInfo::new(addr, pid, hash, extensions);
+
+            // Map to a message that can be fed to our peer manager
+            handshark_peer_manager_send.send( IPeerManagerMessage::AddPeer(peer_info, sock));
+
     });
 
     // Map out the errors for these sinks so they match
@@ -305,7 +326,7 @@ fn main() {
                      Some(Either::A(SelectState::BadPiece(index)))
                  }
                  ODiskMessage::BlockProcessed(block) => {
-                     info!("[disk] BlockProcessed: piece_index :0X{:x}, piece_index :0X{:x}, piece_index :0X{:x},",block.metadata().piece_index(),block.metadata().block_offset(),block.metadata().block_length());
+                     info!("[disk] BlockProcessed: piece_index :0X{:x}, block_offset :0X{:x}, block_length :0X{:x},",block.metadata().piece_index(),block.metadata().block_offset(),block.metadata().block_length());
                      Some(Either::A(SelectState::BlockProcessed))
                  }
                  ODiskMessage::BlockLoaded(block) => {
@@ -422,7 +443,7 @@ fn main() {
 
     println!("{:?} 下载: 发起握手", Local::now().naive_local());
     // Send the peer given from the command line over to the handshaker to initiate a connection
-    handshaker.connect(None, info_hash, peer_addr);
+    handshaker_send.send(InitiateMessage::new(Protocol::BitTorrent, info_hash, peer_addr)).unwrap();
 
     println!("{:?} 下载: 正在下载 ", Local::now().naive_local());
     // Finally, setup our main event loop to drive the tasks we setup earlier

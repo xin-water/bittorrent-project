@@ -1,17 +1,13 @@
+use std::io::{self, BufRead, Write};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
-use hex;
-use std::sync::mpsc::{self, Receiver, Sender};
 
-use bittorrent_protocol::handshake::{BTHandshaker, BTPeer, Handshaker};
+use bittorrent_protocol::handshake::transports::TcpTransport;
+use bittorrent_protocol::handshake::{HandshakerManagerBuilder, InitiateMessage, Protocol, Extension, Extensions };
+
 
 fn main() {
-    let (send, recv): (Sender<BTPeer>, Receiver<BTPeer>) = mpsc::channel();
-    let peer_id = (*b"-UT2060-000000000000").into();
-    let mut handshaker = BTHandshaker::new(send, "127.0.0.1:0".parse().unwrap(), peer_id).unwrap();
-
-    // 从终端读取 种子 hash
     // let mut stdout = io::stdout();
     // let stdin = io::stdin();
     // let mut lines = stdin.lock().lines();
@@ -20,37 +16,47 @@ fn main() {
     // stdout.flush().unwrap();
     //
     // let hex_hash = lines.next().unwrap().unwrap();
+    let hex_hash = "9B47016CFC165D39923ADDAF3A55FC1F90E0BA95";
 
-    // 使用默认 种子 hash
-    let bt_hash_hex = "3c4fffbc472671e16a6cf7b6473ba9a8bf1b1a3a";
+    let hash = hex_to_bytes(&hex_hash).into();
 
-    let hash = hex_to_bytes(&bt_hash_hex).into();
-    handshaker.register_hash(hash);
-
-    // 从终端读取 peer 地址
     // stdout.write(b"Enter An Address And Port (eg: addr:port): ").unwrap();
     // stdout.flush().unwrap();
+    //
     // let str_addr = lines.next().unwrap().unwrap();
-
-    // 从使用默认 peer 地址
     let str_addr = "127.0.0.1:44444";
-
-    // 连接自己
-    // let str_addr = format!("127.0.0.1:{:?}", handshaker.port());
-
     let addr = str_to_addr(&str_addr);
-    handshaker.connect(None, hash, addr);
-    println!("\nConnection With Peer ");
-    let btpeer=recv.recv().unwrap().destory();
-    println!("info hash:{:?},\n\
-              peer id :{:?}",
-              hex::encode(btpeer.1),
-              String::from_utf8_lossy(btpeer.2.as_ref())
-    );
 
-    handshaker.drop();
+    // Show up as a uTorrent client...
+    let peer_id = (*b"-UT2060-000000000000").into();
+
+    let mut ext =Extensions::new();
+    ext.add(Extension::ExtensionProtocol);
+
+    let mut handshaker_manager = HandshakerManagerBuilder::new()
+        .with_peer_id(peer_id)
+        .with_extensions(ext)
+        .build(TcpTransport)
+        .unwrap();
+
+    handshaker_manager.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr)).unwrap();
+
+    let completemessage = handshaker_manager.poll().unwrap();
+
+    let (pro,ext,hash, peer_id,addr,s) = completemessage.into_parts();
+
+    println!("pro:{:?}\n\
+              ext:{:?}\n\
+              hash:{:?}\n\
+              peer_id:{:?}\n\
+              addr:{:?}\n",
+             pro,ext,hex::encode(hash),String::from_utf8_lossy(peer_id.as_ref()),addr
+    );
+    println!("Connection With Peer Established...Closing In 10 Seconds");
     thread::sleep(Duration::from_secs(10));
+
 }
+
 
 fn hex_to_bytes(hex: &str) -> [u8; 20] {
     let mut exact_bytes = [0u8; 20];

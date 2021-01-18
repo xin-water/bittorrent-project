@@ -35,7 +35,8 @@ use bittorrent_protocol::select::{
     ControlMessage, IExtendedMessage, IUberMessage, OExtendedMessage, OUberMessage,
     UberModuleBuilder,
 };
-use bittorrent_protocol::handshake::{BTPeer, BTHandshaker, Handshaker};
+use bittorrent_protocol::handshake::{HandshakerManagerBuilder, Extensions, Extension, InitiateMessage, Protocol, HandshakerConfig};
+use bittorrent_protocol::handshake::transports::TcpTransport;
 use bittorrent_protocol::metainfo::Metainfo;
 
 fn main() {
@@ -58,7 +59,7 @@ fn main() {
         Some(s) => s,
 
         //ubuntu.torrent  hash:  magnet:?xt=urn:btih:d1101a2b9d202811a05e8c57c557a20bf974dc8a
-        None => "3c4fffbc472671e16a6cf7b6473ba9a8bf1b1a3a",
+        None => "9B47016CFC165D39923ADDAF3A55FC1F90E0BA95",
     };
 
     //let addr = matches.value_of("peer").unwrap().parse().unwrap();
@@ -71,11 +72,23 @@ fn main() {
     let hash: Vec<u8> = hex::decode(hash).unwrap();
     let info_hash = InfoHash::from_hash(&hash[..]).unwrap();
 
+    let peer_id = (*b"-UT2060-000000000000").into();
+
+    // Activate the extension protocol via the handshake bits
+    let mut extensions = Extensions::new();
+    extensions.add(Extension::ExtensionProtocol);
+
     // Create a handshaker that can initiate connections with peers
-    let (handshaker_send, handshaker_recv): (Sender<BTPeer>, Receiver<BTPeer>) = mpsc::channel();
-    let peer_id:PeerId = (*b"-UT2060-000000000000").into();
-    let mut handshaker = BTHandshaker::new(handshaker_send, "127.0.0.1:0".parse().unwrap(), peer_id).unwrap();
-    handshaker.register_hash(info_hash);
+    let (mut handshaker_send, mut handshaker_recv) = HandshakerManagerBuilder::new()
+        .with_peer_id(peer_id)
+        .with_extensions(extensions)
+        .with_config(
+            // Set a low handshake timeout so we dont wait on peers that arent listening on tcp
+            HandshakerConfig::default().with_connect_timeout(Duration::from_millis(500)),
+        )
+        .build(TcpTransport)
+        .unwrap()
+        .into_parts();
 
     // Create a peer manager that will hold our peers and heartbeat/send messages to them
     let (mut peer_manager_send, mut peer_manager_recv) =
@@ -92,17 +105,24 @@ fn main() {
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // Hook up a future that feeds incoming (handshaken) peers over to the peer manager
-    let mut handshaker_peer_manager_send = peer_manager_send.clone();
+    let mut handshark_peer_manager_send = peer_manager_send.clone();
     std::thread::spawn(move ||{
-        let ( sock, hash, pid) = handshaker_recv.recv().unwrap().destory();
 
-        // Create our peer identifier used by our peer manager
-        let peer_info = PeerInfo::new(sock.peer_addr().unwrap(), pid, hash);
+        let (_, extensions, hash, pid, addr, sock) = handshaker_recv.poll().unwrap().into_parts();
 
-        // Map to a message that can be fed to our peer manager
-        handshaker_peer_manager_send.send( IPeerManagerMessage::AddPeer(peer_info, sock));
+        // Only connect to peer that support the extension protocol...
+        if extensions.contains(Extension::ExtensionProtocol) {
+
+            // Create our peer identifier used by our peer manager
+            let peer_info = PeerInfo::new(addr, pid, hash, extensions);
+
+            // Map to a message that can be fed to our peer manager
+            handshark_peer_manager_send.send( IPeerManagerMessage::AddPeer(peer_info, sock));
+        } else {
+            panic!("Chosen Peer Does Not Support Extended Messages")
+        }
+
     });
-
 
     // Hook up a future that receives messages from the peer manager
     let mut uber_module_clone = uber_module.clone();
@@ -190,7 +210,14 @@ fn main() {
         .send(IUberMessage::Ut_Metadata(IUtMetadataMessage::DownloadMetainfo(info_hash)))
         .expect("uber_module send msg: DownloadMetainfo fail");
 
-    handshaker.connect(None, info_hash, "127.0.0.1:44444".parse().unwrap());
+    handshaker_send.send(
+        InitiateMessage::new(
+            Protocol::BitTorrent,
+            info_hash,
+            "127.0.0.1:44444".parse().unwrap()
+        )
+    ).unwrap();
+
 
     let mut opt_metainfo :Option<Metainfo>= None;
     loop {
