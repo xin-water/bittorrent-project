@@ -2,23 +2,30 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::net::SocketAddr;
 
+use crate::handshake::Extensions;
 use crate::util::bt::{InfoHash, PeerId};
 
 /// Information that uniquely identifies a peer.
+///
+/// Equality oprations DO NOT INCLUDE `Extensions` as we define a
+/// unique peer as `(address, peer_id, hash)`, so equality will be
+/// based on that tuple.
 #[derive(Eq, Debug, Copy, Clone)]
 pub struct PeerInfo {
     addr: SocketAddr,
     pid: PeerId,
     hash: InfoHash,
+    ext: Extensions,
 }
 
 impl PeerInfo {
     /// Create a new `PeerInfo` object.
-    pub fn new(addr: SocketAddr, pid: PeerId, hash: InfoHash) -> PeerInfo {
+    pub fn new(addr: SocketAddr, pid: PeerId, hash: InfoHash, extensions: Extensions) -> PeerInfo {
         PeerInfo {
             addr: addr,
             pid: pid,
             hash: hash,
+            ext: extensions,
         }
     }
 
@@ -36,6 +43,11 @@ impl PeerInfo {
     pub fn hash(&self) -> &InfoHash {
         &self.hash
     }
+
+    /// Retrieve the extensions supported by this peer.
+    pub fn extensions(&self) -> &Extensions {
+        &self.ext
+    }
 }
 
 impl PartialEq for PeerInfo {
@@ -46,8 +58,8 @@ impl PartialEq for PeerInfo {
 
 impl Hash for PeerInfo {
     fn hash<H>(&self, state: &mut H)
-    where
-        H: Hasher,
+        where
+            H: Hasher,
     {
         self.addr.hash(state);
         self.pid.hash(state);

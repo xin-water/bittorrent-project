@@ -49,6 +49,21 @@ impl PeerManager {
     }
 }
 
+impl PeerManager {
+
+    pub fn send(&mut self, item: IPeerManagerMessage){
+        self.sink.send(item)
+    }
+
+}
+
+impl PeerManager {
+
+    pub fn poll(&mut self) -> Option<OPeerManagerMessage>{
+        self.stream.poll()
+    }
+}
+
 //----------------------------------------------------------------------------//
 
 /// Sink half of a `PeerManager`.
