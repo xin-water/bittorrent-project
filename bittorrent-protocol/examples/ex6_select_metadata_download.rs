@@ -72,7 +72,7 @@ fn main() {
     let hash: Vec<u8> = hex::decode(hash).unwrap();
     let info_hash = InfoHash::from_hash(&hash[..]).unwrap();
 
-    let peer_id = (*b"-UT2060-000000000000").into();
+    let peer_id:PeerId = (*b"-UT2060-000000000000").into();
 
     // Activate the extension protocol via the handshake bits
     let mut extensions = Extensions::new();

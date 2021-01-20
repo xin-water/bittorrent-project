@@ -124,7 +124,7 @@ fn main() {
     let info_hash = metainfo.info().info_hash();
     println!("info-hash:{:?}", hex::encode(&info_hash));
 
-    let peer_id = (*b"-UT2060-000000000000").into();
+    let peer_id:PeerId = (*b"-UT2060-000000000000").into();
 
     // Activate the extension protocol via the handshake bits
     let mut extensions = Extensions::new();
@@ -173,7 +173,7 @@ fn main() {
     let (select_send, select_recv) = mpsc::channel( );
 
     // Will hold a mapping of BlockMetadata -> Vec<PeerInfo> to track which peers to send a queued block to
-    let disk_request_map = Arc::new(Mutex::new(HashMap::new()));
+    let disk_request_map:Arc<Mutex<HashMap<BlockMetadata,Vec<PeerInfo>>>> = Arc::new(Mutex::new(HashMap::new()));
 
 
     //////////////////////////////////////////////////////////////////////////////////////
@@ -274,7 +274,15 @@ fn main() {
                                     request.block_offset() as u64,
                                     request.block_length(),
                                 );
-                                let mut request_map_mut = arc_disk_request_map.lock().unwrap();
+
+                                // Lookup the peer info given the block metadata
+                                let mut request_map_mut ;
+                                loop {
+                                    if let Ok(val) = arc_disk_request_map.lock(){
+                                        request_map_mut = val;
+                                        break
+                                    }
+                                }
 
                                 // Add the block metadata to our request map, and add the peer as an entry there
                                 let block_entry = request_map_mut.entry(block_metadata);
@@ -333,7 +341,13 @@ fn main() {
                      let (metadata, block) = block.into_parts();
 
                      // Lookup the peer info given the block metadata
-                     let mut request_map_mut = disk_request_map.lock().unwrap();
+                     let mut request_map_mut ;
+                     loop {
+                         if let Ok(val) = disk_request_map.lock(){
+                             request_map_mut = val;
+                             break
+                         }
+                     }
                      let mut peer_list = request_map_mut.get_mut(&metadata).unwrap();
                      let peer_info = peer_list.remove(1);
 
