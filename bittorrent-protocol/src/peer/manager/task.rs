@@ -70,7 +70,7 @@ pub fn run_peer(
         }
     });
 
-    let p_send = peer.try_clone().unwrap();
+    let p_send = peer;
     let (m_send, m_recv) = mpsc::channel::<IPeerManagerMessage>();
     std::thread::spawn(move || {
         o_send.send(OPeerManagerMessage::PeerAdded(info)).unwrap();
