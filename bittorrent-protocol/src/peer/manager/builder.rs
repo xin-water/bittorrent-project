@@ -86,7 +86,7 @@ impl PeerManagerBuilder {
     }
 
     /// Build a `PeerManager` from the current `PeerManagerBuilder`.
-    pub fn build(self) -> PeerManager{
+    pub fn build<S>(self) -> PeerManager<S>{
         PeerManager::from_builder(self)
     }
 }

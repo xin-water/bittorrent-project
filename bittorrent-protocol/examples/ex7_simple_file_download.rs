@@ -34,6 +34,7 @@ use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{
     Block, BlockMetadata, BlockMut, DiskManagerBuilder, IDiskMessage, ODiskMessage,
 };
+use std::net::TcpStream;
 
 /*
     Things this example doesnt do, because of the lack of bittorrent_protocol_select:
@@ -73,7 +74,7 @@ enum SelectState {
 enum Either{
     A(SelectState),
     B(IDiskMessage),
-    C(IPeerManagerMessage)
+    C(IPeerManagerMessage<TcpStream>)
 }
 
 fn main() {

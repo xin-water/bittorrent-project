@@ -16,7 +16,7 @@ pub fn run_peer<S>(
     peer: S,
     info: PeerInfo,
     o_send: Sender<OPeerManagerMessage>,
-) -> Sender<IPeerManagerMessage>
+) -> Sender<IPeerManagerMessage<S>>
     where S: Read + Write + TryClone + Send + 'static,
           <S as TryClone>::Item: Send {
 
@@ -75,7 +75,7 @@ pub fn run_peer<S>(
     });
 
     let p_send = peer;
-    let (m_send, m_recv) = mpsc::channel::<IPeerManagerMessage>();
+    let (m_send, m_recv) = mpsc::channel::<IPeerManagerMessage<S>>();
     std::thread::spawn(move || {
         o_send.send(OPeerManagerMessage::PeerAdded(info)).unwrap();
         loop {

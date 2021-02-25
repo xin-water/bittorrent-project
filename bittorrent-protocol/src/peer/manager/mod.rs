@@ -1,6 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io;
+use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -25,14 +26,14 @@ pub use try_clone::TryClone;
 const DEFAULT_TIMER_SLOTS: usize = 2048;
 
 /// Manages a set of peers with heartbeating heartbeating.
-pub struct PeerManager {
-    sink: PeerManagerSink,
-    stream: PeerManagerStream,
+pub struct PeerManager<S> {
+    sink: PeerManagerSink<S>,
+    stream: PeerManagerStream<S>,
 }
 
-impl PeerManager {
+impl<S> PeerManager<S> {
     /// Create a new `PeerManager` from the given `PeerManagerBuilder`.
-    pub fn from_builder(builder: PeerManagerBuilder) -> PeerManager {
+    pub fn from_builder(builder: PeerManagerBuilder) -> PeerManager<S> {
         let (res_send, res_recv) = mpsc::channel();
         let peers = Arc::new(Mutex::new(HashMap::new()));
 
@@ -48,20 +49,22 @@ impl PeerManager {
     /// Break the `PeerManager` into a sink and stream.
     ///
     /// The returned sink implements `Clone`.
-    pub fn into_parts(self) -> (PeerManagerSink, PeerManagerStream) {
+    pub fn into_parts(self) -> (PeerManagerSink<S>, PeerManagerStream<S>) {
         (self.sink, self.stream)
     }
 }
 
-impl PeerManager {
+impl<S> PeerManager<S>
+    where S: Read + Write + TryClone + Send + 'static,
+    <S as TryClone>::Item: Send{
 
-    pub fn send(&mut self, item: IPeerManagerMessage){
+    pub fn send(&mut self, item: IPeerManagerMessage<S>){
         self.sink.send(item)
     }
 
 }
 
-impl PeerManager {
+impl<S> PeerManager<S> {
 
     pub fn poll(&mut self) -> Option<OPeerManagerMessage>{
         self.stream.poll()
@@ -71,14 +74,14 @@ impl PeerManager {
 //----------------------------------------------------------------------------//
 
 /// Sink half of a `PeerManager`.
-pub struct PeerManagerSink {
+pub struct PeerManagerSink<S> {
     build: PeerManagerBuilder,
     send: Sender<OPeerManagerMessage>,
-    peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage>>>>,
+    peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
 }
 
-impl Clone for PeerManagerSink {
-    fn clone(&self) -> PeerManagerSink {
+impl<S> Clone for PeerManagerSink<S> {
+    fn clone(&self) -> PeerManagerSink<S> {
         PeerManagerSink {
             build: self.build,
             send: self.send.clone(),
@@ -87,12 +90,12 @@ impl Clone for PeerManagerSink {
     }
 }
 
-impl PeerManagerSink {
+impl<S> PeerManagerSink<S> {
     fn new(
         build: PeerManagerBuilder,
         send: Sender<OPeerManagerMessage>,
-        peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage>>>>,
-    ) -> PeerManagerSink {
+        peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
+    ) -> PeerManagerSink<S> {
         PeerManagerSink {
             build: build,
             send: send,
@@ -106,7 +109,7 @@ impl PeerManagerSink {
             I,
             &mut PeerManagerBuilder,
             &mut Sender<OPeerManagerMessage>,
-            &mut HashMap<PeerInfo, Sender<IPeerManagerMessage>>,
+            &mut HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>,
         ),
     {
         while let Ok(mut guard) = self.peers.try_lock() {
@@ -116,8 +119,11 @@ impl PeerManagerSink {
     }
 }
 
-impl PeerManagerSink {
-    pub fn send(&mut self, item: IPeerManagerMessage) {
+impl<S> PeerManagerSink<S>
+    where S: Read + Write + TryClone + Send + 'static,
+          <S as TryClone>::Item: Send{
+
+    pub fn send(&mut self, item: IPeerManagerMessage<S>) {
         match item {
             IPeerManagerMessage::AddPeer(info, peer) => {
                 self.run_with_lock_sink((info, peer), |(info, peer), builder, send, peers| {
@@ -161,17 +167,17 @@ impl PeerManagerSink {
 //----------------------------------------------------------------------------//
 
 /// Stream half of a `PeerManager`.
-pub struct PeerManagerStream {
+pub struct PeerManagerStream<S> {
     recv: Receiver<OPeerManagerMessage>,
-    peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage>>>>,
+    peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
     opt_pending: Option<OPeerManagerMessage>,
 }
 
-impl PeerManagerStream {
+impl<S> PeerManagerStream<S> {
     fn new(
         recv: Receiver<OPeerManagerMessage>,
-        peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage>>>>,
-    ) -> PeerManagerStream {
+        peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
+    ) -> PeerManagerStream<S> {
         PeerManagerStream {
             recv: recv,
             peers: peers,
@@ -188,7 +194,7 @@ impl PeerManagerStream {
     where
         F: FnOnce(
             I,
-            &mut HashMap<PeerInfo, Sender<IPeerManagerMessage>>,
+            &mut HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>,
         ) -> Option<OPeerManagerMessage>,
         G: FnOnce(I) -> Option<OPeerManagerMessage>,
     {
@@ -206,7 +212,7 @@ impl PeerManagerStream {
     }
 }
 
-impl PeerManagerStream {
+impl<S> PeerManagerStream<S> {
     pub fn poll(&mut self) -> Option<OPeerManagerMessage> {
         // Intercept and propogate any messages indicating the peer shutdown so we can remove them from our peer map
         let next_message = self
@@ -276,9 +282,10 @@ pub type MessageId = u64;
 
 /// Message that can be sent to the `PeerManager`.
 #[derive(Debug)]
-pub enum IPeerManagerMessage {
+pub enum IPeerManagerMessage<S>{
+
     /// Add a peer to the peer manager.
-    AddPeer(PeerInfo, TcpStream),
+    AddPeer(PeerInfo, S),
     /// Remove a peer from the peer manager.
     RemovePeer(PeerInfo),
     /// Send a message to a peer.
