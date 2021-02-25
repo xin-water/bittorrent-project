@@ -14,15 +14,16 @@ pub use message::extensions::{Extension, Extensions};
 pub use message::initiate::InitiateMessage;
 pub use message::protocol::Protocol;
 
-mod transport;
-pub use transport::Transport;
-
 /// Built in objects implementing `Transport`.
 pub mod transports {
     pub use super::transport::{TcpListenerStream, TcpTransport};
 }
 
+mod transport;
+pub use transport::Transport;
+
 mod stream;
+pub use stream::Stream;
 
 mod local_addr;
 pub use local_addr::LocalAddr;
