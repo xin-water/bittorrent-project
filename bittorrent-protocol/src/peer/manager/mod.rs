@@ -17,6 +17,10 @@ use std::net::TcpStream;
 
 //mod task;
 mod task;
+
+mod try_clone;
+pub use try_clone::TryClone;
+
 // We configure our tick duration based on this, could let users configure this in the future...
 const DEFAULT_TIMER_SLOTS: usize = 2048;
 

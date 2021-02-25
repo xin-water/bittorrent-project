@@ -5,17 +5,21 @@ use super::{IPeerManagerMessage, OPeerManagerMessage};
 use crate::peer::message::PeerWireProtocolMessage;
 use bytes::Bytes;
 use std::net::TcpStream;
-use std::io::{Read, Cursor};
+use std::io::{Read, Cursor, Write};
 use std::sync::mpsc::{self, Sender};
 use crate::peer::{PeerWireMessageCodec, MessageCodec};
 use std::sync::{Arc, Mutex};
 use std::borrow::BorrowMut;
+use crate::peer::manager::TryClone;
 
-pub fn run_peer(
-    peer: TcpStream,
+pub fn run_peer<S>(
+    peer: S,
     info: PeerInfo,
     o_send: Sender<OPeerManagerMessage>,
-) -> Sender<IPeerManagerMessage> {
+) -> Sender<IPeerManagerMessage>
+    where S: Read + Write + TryClone + Send + 'static,
+          <S as TryClone>::Item: Send {
+
     let mut p_recv = peer.try_clone().unwrap();
     let o_send1 = o_send.clone();
     let me_info = info.clone();
