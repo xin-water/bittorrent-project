@@ -30,7 +30,7 @@ pub struct TcpTransport;
 
 impl Transport for TcpTransport {
     type Socket = TcpStream;
-    type Listener = TcpListenerStream<TcpListener>;
+    type Listener = TcpListenerStream;
 
     fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket> {
         TcpStream::connect(addr)
@@ -45,14 +45,14 @@ impl Transport for TcpTransport {
 }
 
 /// Convenient object that wraps a listener stream `L`, and also implements `LocalAddr`.
-pub struct TcpListenerStream<L> {
+pub struct TcpListenerStream {
     listen_addr: SocketAddr,
-    listener: L,
+    listener: TcpListener,
 }
 
-impl<L> TcpListenerStream<L> {
+impl TcpListenerStream {
 
-    fn new(listen_addr: SocketAddr, listener: L) -> TcpListenerStream<L> {
+    fn new(listen_addr: SocketAddr, listener: TcpListener) -> TcpListenerStream {
         TcpListenerStream {
             listen_addr: listen_addr,
             listener: listener,
@@ -60,13 +60,13 @@ impl<L> TcpListenerStream<L> {
     }
 }
 
-impl<L> LocalAddr for TcpListenerStream<L> {
+impl LocalAddr for TcpListenerStream {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         Ok(self.listen_addr)
     }
 }
 
-impl Stream for TcpListenerStream<TcpListener>  {
+impl Stream for TcpListenerStream  {
     type Item = (TcpStream,SocketAddr);
 
     fn poll(&mut self) -> io::Result<(TcpStream,SocketAddr)> {
