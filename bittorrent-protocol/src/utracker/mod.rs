@@ -19,14 +19,12 @@ pub mod option;
 pub mod scrape;
 
 mod client;
-mod handshake;
 mod server;
 
 pub use client::error::{ClientError, ClientResult};
-pub use client::{ClientMetadata, ClientRequest, ClientResponse, ClientToken, TrackerClient};
+pub use client::{ClientMetadata, ClientRequest, ClientResponse, ClientToken, TrackerClient,Handshaker};
 
 pub use server::handler::{ServerHandler, ServerResult};
 pub use server::TrackerServer;
 
-pub use self::handshake::Handshaker;
 pub use crate::util::bt::{InfoHash, PeerId};

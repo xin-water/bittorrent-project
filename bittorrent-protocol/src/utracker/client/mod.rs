@@ -8,10 +8,13 @@ use crate::util::trans::old::TIDGenerator;
 use crate::utracker::announce::{AnnounceResponse, ClientState};
 use crate::utracker::client::dispatcher::DispatchMessage;
 use crate::utracker::scrape::ScrapeResponse;
-use crate::utracker::{ClientResult, Handshaker};
+use crate::utracker::ClientResult;
 use umio::external::Sender;
 
 mod dispatcher;
+pub mod handshake;
+pub use self::handshake::Handshaker;
+
 pub mod error;
 
 /// Capacity of outstanding requests (assuming each request uses at most 1 timer at any time)
