@@ -22,8 +22,8 @@ fn main() {
     // output.flush().unwrap();
     // let dst_path = input_lines.next().unwrap().unwrap();
 
-    let src_path = "bittorrent-protocol/examples_data/file/test_file.txt";
-    let dst_path = "bittorrent-protocol/examples_data/torrent/file.torrent";
+    let src_path = "bittorrent-protocol/examples_data/file/music.zip";
+    let dst_path = "bittorrent-protocol/examples_data/torrent/music.torrent";
 
     match create_torrent(&src_path) {
         Ok(bytes) => {
