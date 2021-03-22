@@ -97,7 +97,7 @@ fn main() {
     let file = match matches.value_of("file") {
         Some(s) => s,
         None => {
-            "bittorrent-protocol/examples_data/torrent/file.torrent"
+            "bittorrent-protocol/examples_data/torrent/music.torrent"
         }
     };
 

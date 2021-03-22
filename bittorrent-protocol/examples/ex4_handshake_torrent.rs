@@ -16,7 +16,11 @@ fn main() {
     // stdout.flush().unwrap();
     //
     // let hex_hash = lines.next().unwrap().unwrap();
-    let hex_hash = "9B47016CFC165D39923ADDAF3A55FC1F90E0BA95";
+
+    /**
+     *   bittorrent-protocol/examples_data/file/music.zip  info-hash
+     */
+    let hex_hash = "E5B6BECAFD04BA0A9B7BBE6883A86DEDA731AE3C";
 
     let hash = hex_to_bytes(&hex_hash).into();
 

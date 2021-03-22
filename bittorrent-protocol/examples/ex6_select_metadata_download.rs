@@ -58,8 +58,10 @@ fn main() {
     let hash = match matches.value_of("hash") {
         Some(s) => s,
 
-        //ubuntu.torrent  hash:  magnet:?xt=urn:btih:d1101a2b9d202811a05e8c57c557a20bf974dc8a
-        None => "9B47016CFC165D39923ADDAF3A55FC1F90E0BA95",
+        /**
+         *   bittorrent-protocol/examples_data/file/music.zip  info-hash
+         */
+        None => "E5B6BECAFD04BA0A9B7BBE6883A86DEDA731AE3C",
     };
 
     //let addr = matches.value_of("peer").unwrap().parse().unwrap();
