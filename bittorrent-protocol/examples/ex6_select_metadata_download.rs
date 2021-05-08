@@ -28,8 +28,8 @@ use bittorrent_protocol::peer::{
     IPeerManagerMessage, OPeerManagerMessage, PeerInfo, PeerManagerBuilder,
 };
 
-use bittorrent_protocol::select::ut_metadata::{
-    IUtMetadataMessage, OUtMetadataMessage, UtMetadataModule,
+use bittorrent_protocol::select::discovery::{
+    IDiscoveryMessage, ODiscoveryMessage, UtMetadataModule,
 };
 use bittorrent_protocol::select::{
     ControlMessage, IExtendedMessage, IUberMessage, OExtendedMessage, OUberMessage,
@@ -100,11 +100,13 @@ fn main() {
     // Create our UtMetadata selection module
     let mut uber_module = Arc::new(Mutex::new(UberModuleBuilder::new()
                                        .with_extended_builder(Some(ExtendedMessageBuilder::new()))
-                                       .with_ut_metadata_module(UtMetadataModule::new())
+                                       .with_discovery_module(UtMetadataModule::new())
                                        .build()));
 
-
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Tell the uber module we want to download metainfo for the given hash
+    uber_module.lock().unwrap()
+        .send(IUberMessage::Discovery(IDiscoveryMessage::DownloadMetainfo(info_hash)))
+        .expect("uber_module send msg: DownloadMetainfo fail");
 
     // Hook up a future that feeds incoming (handshaken) peers over to the peer manager
     let mut handshark_peer_manager_send = peer_manager_send.clone();
@@ -174,8 +176,8 @@ fn main() {
                                PeerWireProtocolMessage::ProtExtension(
                                    PeerExtensionProtocolMessage::UtMetadata(message))) => {
                      println!("[merged_recv] UtMetadata : {:?}\n", &message.message_size());
-                     Some(IUberMessage::Ut_Metadata(
-                         IUtMetadataMessage::ReceivedUtMetadataMessage(info, message),
+                     Some(IUberMessage::Discovery(
+                         IDiscoveryMessage::ReceivedUtMetadataMessage(info, message),
                      ))
                  }
 
@@ -209,7 +211,7 @@ fn main() {
 
     // Tell the uber module we want to download metainfo for the given hash
     uber_module.lock().unwrap()
-        .send(IUberMessage::Ut_Metadata(IUtMetadataMessage::DownloadMetainfo(info_hash)))
+        .send(IUberMessage::Discovery(IDiscoveryMessage::DownloadMetainfo(info_hash)))
         .expect("uber_module send msg: DownloadMetainfo fail");
 
     handshaker_send.send(
@@ -224,7 +226,10 @@ fn main() {
     let mut opt_metainfo :Option<Metainfo>= None;
     loop {
 
-        let message = uber_module.lock().unwrap().poll().unwrap();
+        // 使用大括号限定作用域, 释放锁.
+        let message = {
+            uber_module.lock().unwrap().poll().unwrap()
+        };
 
         let opt_message = message.and_then(|message|
             match message {
@@ -243,7 +248,7 @@ fn main() {
                     ))
                 }
 
-                OUberMessage::Ut_Metadata(OUtMetadataMessage::SendUtMetadataMessage(info, message)) => {
+                OUberMessage::Discovery(ODiscoveryMessage::SendUtMetadataMessage(info, message)) => {
                     println!(
                         "[select_recv] SendUtMetadataMessage --peer_info: {:?} \n--msg: {:?}\n",
                         info, message
@@ -256,8 +261,7 @@ fn main() {
                         ),
                     ))
                 }
-
-                OUberMessage::Ut_Metadata(OUtMetadataMessage::DownloadedMetainfo(metainfo)) => {
+                OUberMessage::Discovery(ODiscoveryMessage::DownloadedMetainfo(metainfo)) => {
                     println!("[select_recv]  DownloadedMetainfo\n");
                     opt_metainfo = Some(metainfo);
                     None

@@ -1,6 +1,6 @@
 //! Module for uber error types.
 
-use crate::select::ut_metadata::error::{UtMetadataError, UtMetadataErrorKind};
+use crate::select::discovery::error::{DiscoveryError, DiscoveryErrorKind};
 
 error_chain! {
     types {
@@ -8,6 +8,6 @@ error_chain! {
     }
 
     links {
-        Ut_Metadata(UtMetadataError, UtMetadataErrorKind);
+        Discovery(DiscoveryError, DiscoveryErrorKind);
     }
 }

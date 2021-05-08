@@ -1,15 +1,15 @@
 use crate::peer::messages::builders::ExtendedMessageBuilder;
-use crate::select::ut_metadata::error::UtMetadataError;
-use crate::select::ut_metadata::{IUtMetadataMessage, OUtMetadataMessage, UtMetadataModule};
+use crate::select::discovery::error::DiscoveryError;
+use crate::select::discovery::{IDiscoveryMessage, ODiscoveryMessage, Run};
 use crate::select::error::UberError;
 use crate::select::extended::ExtendedModule;
 use crate::select::{ControlMessage, ExtendedListener, IExtendedMessage, OExtendedMessage};
 
-trait DiscoveryTrait: ExtendedListener {
+pub trait DiscoveryTrait: ExtendedListener + Run + Send + Sync{
 }
 
 impl<T> DiscoveryTrait for T
-    where T: ExtendedListener  {
+    where T: ExtendedListener + Run +Send + Sync {
 }
 
 /// Enumeration of uber messages that can be sent to the uber module.
@@ -19,8 +19,8 @@ pub enum IUberMessage {
     Control(ControlMessage),
     /// Send an extended message to the extended module.
     Extended(IExtendedMessage),
-    /// Send a ut_metadata message to all ut_metadata modules.
-    Ut_Metadata(IUtMetadataMessage),
+    /// Send a discovery message to all discovery modules.
+    Discovery(IDiscoveryMessage),
 }
 
 /// Enumeration of uber messages that can be received from the uber module.
@@ -28,14 +28,14 @@ pub enum IUberMessage {
 pub enum OUberMessage {
     /// Receive an extended message from the extended module.
     Extended(OExtendedMessage),
-    /// Receive a ut_metadata message from some ut_metadata module.
-    Ut_Metadata(OUtMetadataMessage),
+    /// Receive a discovery message from some discovery module.
+    Discovery(ODiscoveryMessage),
 }
 
 /// Builder for constructing an `UberModule`.
 pub struct UberModuleBuilder {
     ext_builder: Option<ExtendedMessageBuilder>,
-    ut_metadata: Option<UtMetadataModule>,
+    discovery: Vec<Box<dyn DiscoveryTrait>>,
 }
 
 impl UberModuleBuilder {
@@ -43,7 +43,7 @@ impl UberModuleBuilder {
     pub fn new() -> UberModuleBuilder {
         UberModuleBuilder {
             ext_builder: None,
-            ut_metadata: None,
+            discovery: Vec::new(),
         }
     }
 
@@ -59,9 +59,14 @@ impl UberModuleBuilder {
         self
     }
 
-    /// Add the given ut_metadata module to the list of ut_metadata modules.
-    pub fn with_ut_metadata_module(mut self, module: UtMetadataModule) -> UberModuleBuilder {
-        self.ut_metadata =Some(module);
+    /// Add the given discovery module to the list of discovery modules.
+    pub fn with_discovery_module<T>(mut self, module: T) -> UberModuleBuilder
+    where
+        T: ExtendedListener + Run + Send + Sync +'static
+    {
+        self.discovery.push(
+            Box::new(module)  as Box<dyn DiscoveryTrait>
+        );
         self
     }
 
@@ -76,7 +81,7 @@ impl UberModuleBuilder {
 /// Module for multiplexing messages across zero or more other modules.
 pub struct UberModule {
     extended: Option<ExtendedModule>,
-    ut_metadata: Option<UtMetadataModule>,
+    discovery: Vec<Box<dyn DiscoveryTrait>>,
     last_sink_state: Option<ModuleState>,
     last_stream_state: Option<ModuleState>,
 }
@@ -84,7 +89,7 @@ pub struct UberModule {
 #[derive(Debug, Copy, Clone)]
 enum ModuleState {
     Extended,
-    UtMetadata,
+    Discovery(usize),
 }
 
 impl UberModule {
@@ -94,7 +99,7 @@ impl UberModule {
             extended: builder
                 .ext_builder
                 .map(|builder| ExtendedModule::new(builder)),
-            ut_metadata: builder.ut_metadata,
+            discovery: builder.discovery,
             last_sink_state: None,
             last_stream_state: None,
         }
@@ -110,21 +115,26 @@ impl UberModule {
             None => {
                 if self.extended.is_some() {
                     Some(ModuleState::Extended)
-                } else if self.ut_metadata.is_some() {
-                    Some(ModuleState::UtMetadata)
+                } else if !self.discovery.is_empty() {
+                    Some(ModuleState::Discovery(0))
                 } else {
                     None
                 }
             }
             Some(ModuleState::Extended) => {
-                if self.ut_metadata.is_some() {
-                    Some(ModuleState::UtMetadata)
+                if !self.discovery.is_empty() {
+                    Some(ModuleState::Discovery(0))
                 } else {
                     None
                 }
             }
-            Some(ModuleState::UtMetadata) => {
+            Some(ModuleState::Discovery(index)) => {
+                if index + 1 < self.discovery.len() {
+                    //不是最后一个 Discovery时，序号加1
+                    Some(ModuleState::Discovery(index + 1))
+                } else {
                     None
+                }
             }
         }
     }
@@ -140,10 +150,10 @@ impl UberModule {
         assign_state: A,
         logic: L,
     ) -> Result<Option<R>, E>
-    where
-        G: Fn(&UberModule) -> Option<ModuleState>,
-        A: Fn(&mut UberModule, Option<ModuleState>),
-        L: Fn(&mut UberModule, ModuleState) -> Result<Option<R>, E>,
+        where
+            G: Fn(&UberModule) -> Option<ModuleState>,
+            A: Fn(&mut UberModule, Option<ModuleState>),
+            L: Fn(&mut UberModule, ModuleState) -> Result<Option<R>, E>,
     {
         let is_stream = !is_sink;
         let mut result = init;
@@ -185,13 +195,9 @@ impl UberModule {
                 uber.last_sink_state = state;
             },
             |uber, state|
-                match (message,state ) {
-                    (&IUberMessage::Control(ref control),ModuleState::Extended) => {
-                        let d_modules = uber
-                            .ut_metadata
-                            .as_mut()
-                            .expect(" Get UtMetadataModule Fail");
-
+                match (state, message) {
+                    (ModuleState::Extended, &IUberMessage::Control(ref control)) => {
+                        let d_modules = &mut uber.discovery[..];
                         uber.extended
                             .as_mut()
                             .map(|ext_module| {
@@ -200,20 +206,8 @@ impl UberModule {
                             })
                             .unwrap_or(Ok(None))
                     }
-
-                    (&IUberMessage::Control(ref control),ModuleState::UtMetadata,) => uber
-                        .ut_metadata
-                        .as_mut()
-                        .expect(" Get UtMetadataModule Fail")
-                        .send(IUtMetadataMessage::Control(control.clone()))
-                        .map(|var| var.map(|_| ()))
-                        .map_err(|err| err.into()),
-
-                    (&IUberMessage::Extended(ref extended),ModuleState::Extended) => {
-                        let d_modules = uber
-                            .ut_metadata
-                            .as_mut()
-                            .expect(" Get UtMetadataModule Fail");
+                    (ModuleState::Extended, &IUberMessage::Extended(ref extended)) => {
+                        let d_modules = &mut uber.discovery[..];
                         uber.extended
                             .as_mut()
                             .map(|ext_module| {
@@ -222,15 +216,16 @@ impl UberModule {
                             })
                             .unwrap_or(Ok(None))
                     }
-
-                    ( &IUberMessage::Ut_Metadata(ref metadata_msg),ModuleState::UtMetadata) => uber
-                        .ut_metadata
-                        .as_mut()
-                        .expect(" Get UtMetadataModule Fail")
-                        .send(metadata_msg.clone())
+                    (ModuleState::Discovery(index), &IUberMessage::Control(ref control)) => uber
+                        .discovery[index]
+                        .send(IDiscoveryMessage::Control(control.clone()))
                         .map(|var| var.map(|_| ()))
                         .map_err(|err| err.into()),
-
+                    (ModuleState::Discovery(index), &IUberMessage::Discovery(ref discovery)) => uber
+                        .discovery[index]
+                        .send(discovery.clone())
+                        .map(|var| var.map(|_| ()))
+                        .map_err(|err| err.into()),
                     _ => Ok(None),
             },
         )
@@ -259,14 +254,12 @@ impl UberModule {
                         })
                         .unwrap_or(Ok(None)),
 
-                    ModuleState::UtMetadata => uber
-                        .ut_metadata
-                        .as_mut()
-                        .expect(" Get UtMetadataModule Fail")
+                    ModuleState::Discovery(index) => uber
+                        .discovery[index]
                         .poll()
                         .map(|opt_message| {
                             opt_message
-                                .map(|message| Some(OUberMessage::Ut_Metadata(message)))
+                                .map(|message| Some(OUberMessage::Discovery(message)))
                                 .map_err(|err| err.into())
                         })
                         .unwrap_or(Ok(None)),
