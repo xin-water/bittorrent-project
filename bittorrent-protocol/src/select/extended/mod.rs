@@ -6,6 +6,7 @@ use crate::peer::PeerInfo;
 
 use crate::select::error::UberError;
 use crate::select::ControlMessage;
+use crate::select::uber::DiscoveryTrait;
 
 /// Enumeration of extended messages that can be sent to the extended module.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,22 +83,25 @@ impl ExtendedModule {
         }
     }
 
-    pub fn process_message<D>(&mut self, message: IExtendedMessage, d_module: &mut D)
-    where
-        D: ExtendedListener + ?Sized,
+    pub fn process_message(&mut self, message: IExtendedMessage, d_modules: &mut [Box<(dyn DiscoveryTrait)>])
     {
         match message {
             IExtendedMessage::Control(ControlMessage::PeerConnected(info)) => {
                 let mut builder = self.builder.clone();
 
                 //调用回调接口 生成拓展builder对象
-                builder = d_module.extend(&info, builder);
+                for d_module in d_modules.iter() {
+                    let temp_builder = builder;
+                    builder = d_module.extend(&info, temp_builder);
+                }
 
                 let ext_message = builder.build();
                 let ext_peer_info = ExtendedPeerInfo::new(Some(ext_message.clone()), None);
 
                 //调用回调接口 更新实现类中的拓展信息
-                d_module.on_update(&info, &ext_peer_info);
+                for d_module in d_modules {
+                    d_module.on_update(&info, &ext_peer_info);
+                }
 
                 self.peers.insert(info, ext_peer_info);
                 self.out_queue
@@ -107,11 +111,17 @@ impl ExtendedModule {
                 self.peers.remove(&info);
             }
             IExtendedMessage::RecievedExtendedMessage(info, ext_message) => {
-                let ext_peer_info = self.peers.get_mut(&info).unwrap();
-                ext_peer_info.update_theirs(ext_message);
+                let opt_ext_peer_info =self.peers.get_mut(&info);
+                if opt_ext_peer_info.is_some(){
 
-                //调用回调接口 更新实现类中的拓展信息
-                d_module.on_update(&info, &ext_peer_info);
+                    let ext_peer_info=opt_ext_peer_info.unwrap();
+
+                    ext_peer_info.update_theirs(ext_message);
+                    //调用回调接口 更新实现类中的拓展信息
+                    for d_module in d_modules {
+                        d_module.on_update(&info, &ext_peer_info);
+                    }
+                }
             }
             _ => (),
         }
