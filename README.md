@@ -59,9 +59,9 @@ See examples. Understand the execution process and related class usage, and then
 
 ### License
 
-This project is licensed under the [ GPL 3 license ].
+This project is licensed under the [ LGPL 3 license ].
 
-[ GPL 3 license ]: https://github.com/xin-water/bittorrent-project/blob/master/LICENSE
+[ LGPL 3 license ]: https://github.com/xin-water/bittorrent-project/blob/master/LICENSE
 
 
 ### Instructions for use

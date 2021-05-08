@@ -58,9 +58,9 @@ bittorrent-protocol：BT协议库实现。
 
 ### 协议
 
-这个项目使用 [ GPL 3 协议 ].
+这个项目使用 [ LGPL 3 协议 ].
 
-[ GPL 3 协议 ]: https://github.com/xin-water/bittorrent-project/blob/master/LICENSE
+[ LGPL 3 协议 ]: https://github.com/xin-water/bittorrent-project/blob/master/LICENSE
 
 
 ### 使用须知
