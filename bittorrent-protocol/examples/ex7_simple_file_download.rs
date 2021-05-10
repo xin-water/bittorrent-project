@@ -78,10 +78,8 @@ enum Either{
 }
 
 fn main() {
-    log::set_logger(|m| {
-        m.set(LogLevelFilter::max());
-        Box::new(SimpleLogger)
-    }).unwrap();
+
+    env_logger::init();
 
     // Command line argument parsing
     let matches = clap_app!(myapp =>
@@ -624,18 +622,4 @@ fn generate_requests(info: &Info, block_size: usize) -> Vec<RequestMessage> {
     }
 
     requests
-}
-
-struct SimpleLogger;
-
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= LogLevel::Info
-    }
-
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            println!("{:?} - {:?}", record.level(), record.args());
-        }
-    }
 }

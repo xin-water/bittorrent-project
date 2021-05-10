@@ -40,10 +40,8 @@ use bittorrent_protocol::handshake::transports::TcpTransport;
 use bittorrent_protocol::metainfo::Metainfo;
 
 fn main() {
-    log::set_logger(|m| {
-        m.set(LogLevelFilter::max());
-        Box::new(SimpleLogger)
-    }).unwrap();
+
+    env_logger::init();
 
     let matches = clap_app!(myapp =>
         (version: "1.0")
@@ -285,20 +283,6 @@ fn main() {
                 println!("种子文件下载完成！\npath:{:?}", output);
                 break
             }
-        }
-    }
-}
-
-struct SimpleLogger;
-
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= LogLevel::Info
-    }
-
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            println!("{:?} - {:?}", record.level(), record.args());
         }
     }
 }

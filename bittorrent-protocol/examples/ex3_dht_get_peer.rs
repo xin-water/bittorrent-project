@@ -7,11 +7,8 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::thread::{self};
 
 fn main() {
-    log::set_logger(|m| {
-        m.set(LogLevelFilter::max());
-        Box::new(SimpleLogger)
-    })
-    .unwrap();
+
+    env_logger::init();
 
     let handshaker = SimpleHandshaker {
         filter: HashSet::new(),
@@ -88,19 +85,5 @@ impl Handshaker for SimpleHandshaker {
     /// Send the given Metadata back to the client.
     fn metadata(&mut self, _: Self::Metadata) {
         ()
-    }
-}
-
-struct SimpleLogger;
-
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= LogLevel::Info
-    }
-
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            println!("{:?} - {:?}", record.level(), record.args());
-        }
     }
 }

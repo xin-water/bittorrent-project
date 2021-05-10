@@ -3,20 +3,16 @@ extern crate log;
 
 use std::fs::File;
 use std::io::{self, BufRead, Read, Write};
-
 use chrono::Local;
-use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
+use log::{debug, error, log_enabled, info};
+use env_logger;
 
 use bittorrent_protocol::metainfo::Metainfo;
-
 use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
 
 fn main() {
-    log::set_logger(|m| {
-        m.set(LogLevelFilter::max());
-        Box::new(SimpleLogger)
-    }).unwrap();
+    env_logger::init();
 
     // info!("Utility For Allocating Disk Space For A Torrent File");
 
@@ -61,32 +57,18 @@ fn main() {
         match recv_msg.unwrap() {
             ODiskMessage::FoundGoodPiece(_, _) => {
                 good_pieces += 1;
-                println!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
+                debug!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
             }
             ODiskMessage::TorrentAdded(hash) => {
                 println!();
-                println!("Torrent With Hash {:?} Successfully Added", hash);
-                println!(
+                debug!("Torrent With Hash {:?} Successfully Added", hash);
+                debug!(
                     "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
                     good_pieces, total_pieces
                 );
                 break;
             }
             unexpected @ _ => panic!("Unexpected ODiskMessage {:?}", unexpected),
-        }
-    }
-}
-
-struct SimpleLogger;
-
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= LogLevel::Info
-    }
-
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            println!("{:?} - {:?}", record.level(), record.args());
         }
     }
 }
