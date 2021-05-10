@@ -1,13 +1,13 @@
 [package]
 name = "bittorrent-protocol"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["xinwater <1872407021@qq.com>"]
 edition = "2018"
 description = "Bittorrent Protocol Library"
 homepage    = "https://github.com/xin-water/bittorrent-project/tree/master/bittorrent-protocol"
 repository  = "https://github.com/xin-water/bittorrent-project/tree/master/bittorrent-protocol"
 keywords    = [ "bittorrent", "bencode", "tracker", "dht", "utp" ]
-license     = "GPL3"
+license     = "LGPL3"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
