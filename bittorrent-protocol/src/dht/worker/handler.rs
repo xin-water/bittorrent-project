@@ -10,6 +10,8 @@ use log::LogLevel;
 use mio::{self, EventLoop, Handler};
 
 // use crate::bencode::Bencode;
+use crate::dht::bencode::Bencode;
+
 use crate::util::bt::InfoHash;
 use crate::util::convert;
 use crate::util::net::IpAddr;
@@ -36,7 +38,6 @@ use crate::dht::storage::AnnounceStorage;
 use crate::dht::token::{Token, TokenStore};
 use crate::dht::transaction::{AIDGenerator, ActionID, TransactionID};
 
-use crate::dht::bencode::Bencode;
 use crate::dht::worker::bootstrap::{BootstrapStatus, TableBootstrap};
 use crate::dht::worker::lookup::{LookupStatus, TableLookup};
 use crate::dht::worker::refresh::{RefreshStatus, TableRefresh};

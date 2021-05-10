@@ -10,7 +10,7 @@ use std::io::{stdin, stdout, stderr, Read, Write};
 
 
 fn usage() -> ! {
-    println!("Usage: utp [-s|-c] <address> <port>");
+    println!("Usage: ex4_utpcat [-s|-c] <address> <port>");
     process::exit(1);
 }
 
