@@ -15,7 +15,7 @@ use std::sync::mpsc::{self,Sender, Receiver};
 use std::sync::{Arc,Mutex};
 use chrono::Local;
 use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
-
+use simplelog::*;
 use bittorrent_protocol::metainfo::{Info, Metainfo};
 use bittorrent_protocol::util::bt::PeerId;
 
@@ -79,7 +79,12 @@ enum Either{
 
 fn main() {
 
-    env_logger::init();
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
 
     // Command line argument parsing
     let matches = clap_app!(myapp =>

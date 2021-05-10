@@ -1,14 +1,24 @@
+#[macro_use]
+extern crate log;
+
 use bittorrent_protocol::dht::{DhtBuilder, Handshaker, Router};
 use bittorrent_protocol::util::bt::{InfoHash, PeerId};
 use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
+use simplelog::*;
 use std::collections::HashSet;
 use std::io::{self, Read};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::thread::{self};
+use std::fs::File;
 
 fn main() {
 
-    env_logger::init();
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
 
     let handshaker = SimpleHandshaker {
         filter: HashSet::new(),

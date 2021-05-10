@@ -2,3 +2,4 @@
 /.idea
 bittorrent-protocol/examples_data/download/*
 bittorrent-protocol/tests_data/*
+my_rust_binary.log

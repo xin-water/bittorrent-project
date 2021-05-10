@@ -5,14 +5,19 @@ use std::fs::File;
 use std::io::{self, BufRead, Read, Write};
 use chrono::Local;
 use log::{debug, error, log_enabled, info};
-use env_logger;
+use simplelog::*;
 
 use bittorrent_protocol::metainfo::Metainfo;
 use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
 
 fn main() {
-    env_logger::init();
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
 
     // info!("Utility For Allocating Disk Space For A Torrent File");
 

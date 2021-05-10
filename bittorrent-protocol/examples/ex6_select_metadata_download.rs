@@ -6,6 +6,7 @@ extern crate clap;
 
 use hex;
 use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
+use simplelog::*;
 use pendulum::future::TimerBuilder;
 use pendulum::HashedWheelBuilder;
 use std::fmt::Debug;
@@ -41,7 +42,12 @@ use bittorrent_protocol::metainfo::Metainfo;
 
 fn main() {
 
-    env_logger::init();
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
 
     let matches = clap_app!(myapp =>
         (version: "1.0")

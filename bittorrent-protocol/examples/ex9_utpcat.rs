@@ -1,8 +1,9 @@
 //! Implementation of a simple uTP client and server.
 #[macro_use]
 extern crate log;
+use simplelog::*;
+use std::fs::File;
 
-use env_logger;
 use std::process;
 use bittorrent_protocol::utp::UtpStream;
 use std::io::{stdin, stdout, stderr, Read, Write};
@@ -21,7 +22,12 @@ fn main() {
     enum Mode {Server, Client}
 
     // Start logging
-    env_logger::init();
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Warn, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
 
     // Fetch arguments
     let mut args = std::env::args();
