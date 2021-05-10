@@ -626,12 +626,15 @@ impl UtpSocket {
         // packet acknowledged in the receive loop above.
         // If there were no wrapping around of sequence numbers, we'd simply check if the packet's
         // sequence number is greater than `last_acked`.
+
+       /*
         let distance_a = packet.seq_nr().wrapping_sub(self.last_acked);
         let distance_b = self.last_acked.wrapping_sub(packet.seq_nr());
         if distance_a > distance_b {
             debug!("Packet already acknowledged, skipping...");
             return Ok(());
         }
+        */
 
         packet.set_timestamp(now_microseconds());
         packet.set_timestamp_difference(self.their_delay);
