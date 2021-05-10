@@ -7,6 +7,11 @@ extern crate log;
 #[macro_use]
 extern crate nom;
 
+extern crate num_traits;
+
+#[cfg(test)]
+extern crate quickcheck;
+
 pub mod util;
 
 #[macro_use]
