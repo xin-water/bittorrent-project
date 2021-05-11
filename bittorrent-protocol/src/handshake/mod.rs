@@ -16,7 +16,7 @@ pub use message::protocol::Protocol;
 
 /// Built in objects implementing `Transport`.
 pub mod transports {
-    pub use super::transport::{TcpListenerStream, TcpTransport};
+    pub use super::transport::{TcpListenerStream, TcpTransport,UtpListenerStream, UtpTransport};
 }
 
 mod transport;

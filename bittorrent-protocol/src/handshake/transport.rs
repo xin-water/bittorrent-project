@@ -7,6 +7,7 @@ use std::net::{TcpStream, TcpListener};
 use std::net::{SocketAddr, Incoming};
 use std::option::Option::Some;
 use super::stream::Stream;
+use crate::utp::{UtpSocket, UtpListener, UtpStream};
 
 /// Trait for initializing connections over an abstract `Transport`.
 pub trait Transport {
@@ -78,6 +79,61 @@ impl Stream for TcpListenerStream  {
     }
 }
 
+
+/// Defines a `Transport` operating over UTP.
+pub struct UtpTransport;
+
+
+impl Transport for UtpTransport {
+    type Socket = UtpSocket;
+    type Listener = UtpListenerStream;
+
+    fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket> {
+        UtpSocket::connect(addr)
+    }
+
+    fn listen(&self, addr: &SocketAddr) -> io::Result<Self::Listener> {
+        let listener = UtpListener::bind(addr)?;
+        let listen_addr = listener.local_addr()?;
+
+        Ok(UtpListenerStream::new(listen_addr, listener))
+    }
+}
+
+
+/// Convenient object that wraps a listener stream `L`, and also implements `LocalAddr`.
+pub struct UtpListenerStream {
+    listen_addr: SocketAddr,
+    listener: UtpListener,
+}
+
+impl UtpListenerStream {
+
+    fn new(listen_addr: SocketAddr, listener: UtpListener) -> UtpListenerStream {
+        UtpListenerStream {
+            listen_addr: listen_addr,
+            listener: listener,
+        }
+    }
+}
+
+impl LocalAddr for UtpListenerStream {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        Ok(self.listen_addr)
+    }
+}
+
+impl Stream for UtpListenerStream  {
+    type Item = (UtpSocket,SocketAddr);
+
+    fn poll(&mut self) -> io::Result<(UtpSocket,SocketAddr)> {
+        if let Ok((result,addr)) = self.listener.accept() {
+            Ok((result,addr))
+        }else {
+            Err(Error::new(ErrorKind::NotFound, "listener fail"))
+        }
+    }
+}
 //----------------------------------------------------------------------------------//
 
 #[cfg(test)]

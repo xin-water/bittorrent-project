@@ -1,13 +1,14 @@
 use std::cmp::{min, max};
 use std::collections::VecDeque;
 use std::net::{ToSocketAddrs, SocketAddr, UdpSocket};
-use std::io::{Result, ErrorKind};
+use std::io::{Result, ErrorKind, Read, Write};
 use super::util::*;
 use super::packet::*;
 use super::error::SocketError;
 use rand;
 use std::time::{Duration, Instant};
 use super::time::*;
+use std::io;
 
 // For simplicity's sake, let us assume no packet will ever exceed the
 // Ethernet maximum transfer unit of 1500 bytes.
@@ -41,7 +42,7 @@ enum SocketState {
     ResetReceived,
     Closed,
 }
-
+#[derive(Copy, Clone,Debug)]
 struct DelayDifferenceSample {
     received_at: Timestamp,
     difference: Delay,
@@ -82,6 +83,7 @@ fn take_address<A: ToSocketAddrs>(addr: A) -> Result<SocketAddr> {
 /// // explicitly drop it or just let it go out of scope.
 /// socket.close();
 /// ```
+#[derive(Debug)]
 pub struct UtpSocket {
     /// The wrapped UDP socket
     socket: UdpSocket,
@@ -1072,11 +1074,109 @@ impl UtpSocket {
             }
         }
     }
+
+
+
+/// Creates a new independently owned handle to the underlying socket.
+///
+/// The returned `UtpSocket` is a reference to the same stream that this
+/// object references. Both handles will read and write the same stream of
+/// data, and options set on one stream will be propagated to the other
+/// stream.
+///
+/// # Examples
+///
+/// ```no_run
+/// use bittorrent_protocol::utp::UtpSocket;
+///
+/// let socket = UtpSocket::connect("127.0.0.1:8080")
+///                        .expect("Couldn't connect to the server...");
+/// let socket_clone = socket.try_clone().expect("clone failed...");
+/// ```
+   pub fn try_clone(&self) -> io::Result<UtpSocket> {
+
+    let mut socket = self.socket.try_clone().expect("UtpSocket clone fail");
+    let mut connected_to = self.connected_to.clone();
+    let mut sender_connection_id = self.sender_connection_id;
+    let mut receiver_connection_id = self.receiver_connection_id;
+    let mut seq_nr = self.seq_nr;
+    let mut ack_nr = self.ack_nr;
+    let mut state = self.state.clone();
+    let mut incoming_buffer = self.incoming_buffer.clone();
+    let mut send_window = self.send_window.clone();
+    let mut unsent_queue = self.unsent_queue.clone();
+    let mut duplicate_ack_count = self.duplicate_ack_count.clone();
+    let mut last_acked = self.last_acked.clone();
+    let mut last_acked_timestamp = self.last_acked_timestamp.clone();
+    let mut last_dropped = self.last_dropped.clone();
+    let mut rtt = self.rtt.clone();
+    let mut pending_data = self.pending_data.clone();
+    let mut rtt_variance = self.rtt_variance.clone();
+    let mut curr_window = self.curr_window.clone();
+    let mut remote_wnd_size= self.remote_wnd_size.clone();
+    let mut base_delays= self.base_delays.clone();
+    let mut current_delays= self.current_delays.clone();
+    let mut their_delay = self.their_delay.clone();
+    let mut last_rollover = self.last_rollover.clone();
+    let mut congestion_timeout = self.congestion_timeout.clone();
+    let mut cwnd = self.cwnd.clone();
+    let mut max_retransmission_retries = self.max_retransmission_retries.clone();
+
+    let mut utp_socket = UtpSocket {
+            socket,
+            connected_to ,
+            sender_connection_id,
+            receiver_connection_id,
+            seq_nr,
+            ack_nr,
+            state,
+            incoming_buffer,
+            send_window,
+            unsent_queue,
+            duplicate_ack_count,
+            last_acked,
+            last_acked_timestamp,
+            last_dropped,
+            rtt,
+            rtt_variance,
+            pending_data,
+            curr_window,
+            remote_wnd_size,
+            base_delays,
+            current_delays,
+            their_delay,
+            last_rollover,
+            congestion_timeout,
+            cwnd,
+            max_retransmission_retries,
+        };
+
+       Ok(utp_socket)
+    }
+
+
+
 }
 
 impl Drop for UtpSocket {
     fn drop(&mut self) {
         let _ = self.close();
+    }
+}
+
+impl Read for UtpSocket {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.recv_from(buf).map(|(read, _src)| read)
+    }
+}
+
+impl Write for UtpSocket {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.send_to(buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.flush()
     }
 }
 
