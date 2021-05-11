@@ -69,6 +69,14 @@ fn main() {
                     Ok(read) => writer.write(&payload[..read]).expect("Error writing to stdout"),
                     Err(e) => panic!("{}", e)
                 };
+
+                match stdin().read(&mut payload) {
+                    Ok(0) => {},
+                    Ok(read) => {
+                        stream.write(&payload[..read]).expect("Error writing to stdout");
+                    }
+                    Err(e) => panic!("{}", e)
+                };
             }
         }
         Mode::Client => {
@@ -87,6 +95,17 @@ fn main() {
                 match reader.read(&mut payload) {
                     Ok(0) => break,
                     Ok(read) => stream.write(&payload[..read]).expect("Error writing to stream"),
+                    Err(e) => {
+                        stream.close().expect("Error closing stream");
+                        panic!("{:?}", e);
+                    }
+                };
+
+                match stream.read(&mut payload) {
+                    Ok(0) => {},
+                    Ok(read) =>{
+                        stdout().write(&payload[..read]).expect("Error writing to stream");
+                    }
                     Err(e) => {
                         stream.close().expect("Error closing stream");
                         panic!("{:?}", e);
