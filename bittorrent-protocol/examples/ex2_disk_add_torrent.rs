@@ -14,8 +14,8 @@ use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
 fn main() {
     CombinedLogger::init(
         vec![
-            TermLogger::new(LevelFilter::Debug, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Info, Config::default(), File::create("my_rust_binary.log").unwrap()),
+            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
         ]
     ).unwrap();
 
