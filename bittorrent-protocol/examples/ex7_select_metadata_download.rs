@@ -84,6 +84,7 @@ fn main() {
     let mut extensions = Extensions::new();
     extensions.add(Extension::ExtensionProtocol);
 
+    info!("start component....");
     // Create a handshaker that can initiate connections with peers
     let (mut handshaker_send, mut handshaker_recv) = HandshakerManagerBuilder::new()
         .with_peer_id(peer_id)
@@ -107,6 +108,7 @@ fn main() {
                                        .with_discovery_module(UtMetadataModule::new())
                                        .build()));
 
+    info!("commit DownloadMetainfo to uber_module....");
     // Tell the uber module we want to download metainfo for the given hash
     uber_module.lock().unwrap()
         .send(IUberMessage::Discovery(IDiscoveryMessage::DownloadMetainfo(info_hash)))
@@ -124,14 +126,18 @@ fn main() {
             // Create our peer identifier used by our peer manager
             let peer_info = PeerInfo::new(addr, pid, hash, extensions);
 
+            info!("AddPeer:\n {:?} \n ......................to peer_manmager_module....",&peer_info);
+
             // Map to a message that can be fed to our peer manager
             handshark_peer_manager_send.send( IPeerManagerMessage::AddPeer(peer_info, sock));
+
         } else {
             panic!("Chosen Peer Does Not Support Extended Messages")
         }
 
     });
 
+    info!("start  peer_manager_recv loop ....");
     // Hook up a future that receives messages from the peer manager
     let mut uber_module_clone = uber_module.clone();
      std::thread::spawn(move ||{
@@ -213,11 +219,13 @@ fn main() {
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    info!("commit DownloadMetainfo to uber_module....");
     // Tell the uber module we want to download metainfo for the given hash
     uber_module.lock().unwrap()
         .send(IUberMessage::Discovery(IDiscoveryMessage::DownloadMetainfo(info_hash)))
         .expect("uber_module send msg: DownloadMetainfo fail");
 
+    info!("start  handshaker_send ....");
     handshaker_send.send(
         InitiateMessage::new(
             Protocol::BitTorrent,
