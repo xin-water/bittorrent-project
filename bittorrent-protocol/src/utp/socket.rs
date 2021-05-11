@@ -19,7 +19,7 @@ const TARGET: f64 = 100_000.0; // 100 milliseconds
 const MSS: u32 = 1400;
 const MIN_CWND: u32 = 2;
 const INIT_CWND: u32 = 2;
-const INITIAL_CONGESTION_TIMEOUT: u64 = 1000; // one second
+const INITIAL_CONGESTION_TIMEOUT: u64 = 2000; // one second
 const MIN_CONGESTION_TIMEOUT: u64 = 500; // 500 ms
 const MAX_CONGESTION_TIMEOUT: u64 = 60_000; // one minute
 const BASE_HISTORY: usize = 10; // base delays history size
@@ -837,7 +837,7 @@ impl UtpSocket {
             (_, PacketType::Syn) => Ok(Some(self.prepare_reply(packet, PacketType::Reset))),
             (SocketState::SynSent, PacketType::State) => {
                 self.connected_to = src;
-                self.ack_nr = packet.seq_nr();
+                self.ack_nr = packet.seq_nr()-1;
                 self.seq_nr += 1;
                 self.state = SocketState::Connected;
                 self.last_acked = packet.ack_nr();
