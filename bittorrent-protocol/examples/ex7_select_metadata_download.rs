@@ -37,7 +37,7 @@ use bittorrent_protocol::select::{
     UberModuleBuilder,
 };
 use bittorrent_protocol::handshake::{HandshakerManagerBuilder, Extensions, Extension, InitiateMessage, Protocol, HandshakerConfig};
-use bittorrent_protocol::handshake::transports::TcpTransport;
+use bittorrent_protocol::handshake::transports::{TcpTransport,UtpTransport};
 use bittorrent_protocol::metainfo::Metainfo;
 
 fn main() {
@@ -92,7 +92,7 @@ fn main() {
             // Set a low handshake timeout so we dont wait on peers that arent listening on tcp
             HandshakerConfig::default().with_connect_timeout(Duration::from_millis(500)),
         )
-        .build(TcpTransport)
+        .build(UtpTransport)
         .unwrap()
         .into_parts();
 

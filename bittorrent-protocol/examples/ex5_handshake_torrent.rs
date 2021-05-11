@@ -3,7 +3,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 
-use bittorrent_protocol::handshake::transports::TcpTransport;
+use bittorrent_protocol::handshake::transports::{TcpTransport,UtpTransport};
 use bittorrent_protocol::handshake::{HandshakerManagerBuilder, InitiateMessage, Protocol, Extension, Extensions };
 
 
@@ -40,7 +40,7 @@ fn main() {
     let mut handshaker_manager = HandshakerManagerBuilder::new()
         .with_peer_id(peer_id)
         .with_extensions(ext)
-        .build(TcpTransport)
+        .build(UtpTransport)
         .unwrap();
 
     handshaker_manager.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr)).unwrap();

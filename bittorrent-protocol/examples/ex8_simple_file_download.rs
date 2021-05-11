@@ -20,7 +20,7 @@ use bittorrent_protocol::metainfo::{Info, Metainfo};
 use bittorrent_protocol::util::bt::PeerId;
 
 use bittorrent_protocol::handshake::{HandshakerManagerBuilder, Extensions, Extension, InitiateMessage, Protocol, HandshakerConfig};
-use bittorrent_protocol::handshake::transports::TcpTransport;
+use bittorrent_protocol::handshake::transports::{TcpTransport,UtpTransport};
 
 use bittorrent_protocol::peer::messages::{
     BitFieldMessage, HaveMessage, PeerWireProtocolMessage, PieceMessage, RequestMessage,
@@ -35,6 +35,7 @@ use bittorrent_protocol::disk::{
     Block, BlockMetadata, BlockMut, DiskManagerBuilder, IDiskMessage, ODiskMessage,
 };
 use std::net::TcpStream;
+use bittorrent_protocol::utp::UtpSocket;
 
 /*
     Things this example doesnt do, because of the lack of bittorrent_protocol_select:
@@ -74,7 +75,7 @@ enum SelectState {
 enum Either{
     A(SelectState),
     B(IDiskMessage),
-    C(IPeerManagerMessage<TcpStream>)
+    C(IPeerManagerMessage<UtpSocket>)
 }
 
 fn main() {
@@ -149,7 +150,7 @@ fn main() {
                 .with_wait_buffer_size(0)
                 .with_done_buffer_size(0),
         )
-        .build(TcpTransport) // Will handshake over TCP (could swap this for UTP in the future)
+        .build(UtpTransport) // Will handshake over TCP (could swap this for UTP in the future)
         .unwrap()
         .into_parts();
 
