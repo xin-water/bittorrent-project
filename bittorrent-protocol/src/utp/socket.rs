@@ -985,7 +985,7 @@ impl UtpSocket {
 
         // Update congestion window size
         if let Some(index) = self.send_window.iter().position(|p| {
-            debug!("update_send_window : packet.ack_nr() = {:?} , p.seq_nr() = {:?}",packet.ack_nr(),p.seq_nr());
+            debug!("handle_state_packet : packet.ack_nr() = {:?} , p.seq_nr() = {:?}",packet.ack_nr(),p.seq_nr());
             packet.ack_nr() == p.seq_nr()
         }) {
             // Calculate the sum of the size of every packet implicitly and explicitly acknowledged
