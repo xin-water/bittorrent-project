@@ -9,13 +9,20 @@ use std::fs::File;
 fn handle_client(mut s: UtpSocket) {
     let mut buf = [0; 1500];
 
-    // Reply to a data packet with its own payload, then end the connection
-    match s.recv_from(&mut buf) {
-        Ok((nread, src)) => {
-            info!("<= [{}] {:?}", src, &buf[..nread]);
-            let _ = s.send_to(&buf[..nread]);
+    loop {
+        // Reply to a data packet with its own payload, then end the connection
+        match s.recv_from(&mut buf) {
+
+            Ok((0, src)) => {
+                info!("<= [{}] disconnect", src);
+                break;
+            }
+            Ok((nread, src)) => {
+                info!("<= [{}] {:?}", src, &buf[..nread]);
+                let _ = s.send_to(&buf[..nread]);
+            }
+            Err(e) => println!("{}", e)
         }
-        Err(e) => println!("{}", e)
     }
 }
 
