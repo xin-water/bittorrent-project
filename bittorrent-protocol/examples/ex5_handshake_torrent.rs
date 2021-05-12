@@ -1,3 +1,9 @@
+
+#[macro_use]
+extern crate log;
+use simplelog::*;
+use std::fs::File;
+
 use std::io::{self, BufRead, Write};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::thread;
@@ -8,6 +14,15 @@ use bittorrent_protocol::handshake::{HandshakerManagerBuilder, InitiateMessage, 
 
 
 fn main() {
+
+    // Start logger
+    CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
+        ]
+    ).unwrap();
+
     // let mut stdout = io::stdout();
     // let stdin = io::stdin();
     // let mut lines = stdin.lock().lines();

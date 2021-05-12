@@ -253,7 +253,7 @@ impl UtpSocket {
             packet.set_timestamp(now_microseconds());
 
             // Send packet
-            debug!("Connecting to {}", socket.connected_to);
+            debug!("start connecting to {}", socket.connected_to);
             socket.socket.send_to(packet.as_ref(), socket.connected_to)?;
             socket.state = SocketState::SynSent;
             debug!("sent {:?}", packet);
@@ -520,7 +520,9 @@ impl UtpSocket {
 
             if flushed == self.pending_data.len() {
                 self.pending_data.clear();
-                self.advance_incoming_buffer();
+                if let Some(package) = self.advance_incoming_buffer(){
+                    self.pending_data=package.payload().to_vec();
+                }
             } else {
                 self.pending_data = self.pending_data[flushed..].to_vec();
             }
@@ -538,6 +540,7 @@ impl UtpSocket {
                 self.advance_incoming_buffer();
             } else {
                 self.pending_data = self.incoming_buffer[0].payload()[flushed..].to_vec();
+                self.advance_incoming_buffer();
             }
 
             return flushed;
@@ -897,6 +900,12 @@ impl UtpSocket {
     }
 
     fn handle_data_packet(&mut self, packet: &Packet) -> Option<Packet> {
+
+        // // data包 也是特殊的 state 包
+        // self.handle_state_packet(packet);
+
+        self.update_send_window(packet);
+
         // If a FIN was previously sent, reply with a FIN packet acknowledging the received packet.
         let packet_type = if self.state == SocketState::FinSent {
             PacketType::Fin
@@ -968,6 +977,8 @@ impl UtpSocket {
     }
 
     fn handle_state_packet(&mut self, packet: &Packet) {
+
+        //如果 state 的 ack_nr 不增加，则表示发生丢包
         if packet.ack_nr() == self.last_acked {
             self.duplicate_ack_count += 1;
         } else {
@@ -976,31 +987,7 @@ impl UtpSocket {
             self.duplicate_ack_count = 1;
         }
 
-        // Update congestion window size
-        if let Some(index) = self.send_window.iter().position(|p| packet.ack_nr() == p.seq_nr()) {
-            // Calculate the sum of the size of every packet implicitly and explicitly acknowledged
-            // by the inbound packet (i.e., every packet whose sequence number precedes the inbound
-            // packet's acknowledgement number, plus the packet whose sequence number matches)
-            let bytes_newly_acked = self.send_window.iter()
-                .take(index + 1)
-                .fold(0, |acc, p| acc + p.len());
-
-            // Update base and current delay
-            let now = now_microseconds();
-            let our_delay = now - self.send_window[index].timestamp();
-            debug!("our_delay: {}", our_delay);
-            self.update_base_delay(our_delay, now);
-            self.update_current_delay(our_delay, now);
-
-            let off_target: f64 = (TARGET - u32::from(self.queuing_delay()) as f64) / TARGET;
-            debug!("off_target: {}", off_target);
-
-            self.update_congestion_window(off_target, bytes_newly_acked as u32);
-
-            // Update congestion timeout
-            let rtt = u32::from(our_delay - self.queuing_delay()) / 1000; // in milliseconds
-            self.update_congestion_timeout(rtt as i32);
-        }
+        self.update_send_window(packet);
 
         let mut packet_loss_detected: bool = !self.send_window.is_empty() &&
                                              self.duplicate_ack_count == 3;
@@ -1050,6 +1037,35 @@ impl UtpSocket {
 
         // Success, advance send window
         self.advance_send_window();
+    }
+
+    fn update_send_window(&mut self, packet: &Packet) {
+
+        // Update congestion window size
+        if let Some(index) = self.send_window.iter().position(|p| packet.ack_nr() == p.seq_nr()) {
+            // Calculate the sum of the size of every packet implicitly and explicitly acknowledged
+            // by the inbound packet (i.e., every packet whose sequence number precedes the inbound
+            // packet's acknowledgement number, plus the packet whose sequence number matches)
+            let bytes_newly_acked = self.send_window.iter()
+                .take(index + 1)
+                .fold(0, |acc, p| acc + p.len());
+
+            // Update base and current delay
+            let now = now_microseconds();
+            let our_delay = now - self.send_window[index].timestamp();
+            debug!("our_delay: {}", our_delay);
+            self.update_base_delay(our_delay, now);
+            self.update_current_delay(our_delay, now);
+
+            let off_target: f64 = (TARGET - u32::from(self.queuing_delay()) as f64) / TARGET;
+            debug!("off_target: {}", off_target);
+
+            self.update_congestion_window(off_target, bytes_newly_acked as u32);
+
+            // Update congestion timeout
+            let rtt = u32::from(our_delay - self.queuing_delay()) / 1000; // in milliseconds
+            self.update_congestion_timeout(rtt as i32);
+        }
     }
 
     /// Inserts a packet into the socket's buffer.
