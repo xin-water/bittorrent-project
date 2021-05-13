@@ -1,6 +1,6 @@
 [package]
 name = "bittorrent-protocol"
-version = "0.2.0-beta"
+version = "0.2.0"
 authors = ["xinwater <1872407021@qq.com>"]
 edition = "2018"
 description = "Bittorrent Protocol Library"
