@@ -38,8 +38,3 @@ pub enum ODiscoveryMessage {
     /// We have finished downloading the given `Metainfo`.
     DownloadedMetainfo(Metainfo),
 }
-
-pub trait Run {
-    fn send(&mut self, item: IDiscoveryMessage) -> Result<Option<IDiscoveryMessage>, DiscoveryError>;
-    fn poll(&mut self) -> Option<Result<ODiscoveryMessage, DiscoveryError>>;
-}
