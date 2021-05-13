@@ -94,7 +94,7 @@ fn main() {
             // Set a low handshake timeout so we dont wait on peers that arent listening on tcp
             HandshakerConfig::default().with_connect_timeout(Duration::from_millis(500)),
         )
-        .build(UtpTransport)
+        .build(TcpTransport)
         .unwrap()
         .into_parts();
 
@@ -144,29 +144,26 @@ fn main() {
      std::thread::spawn(move ||{
          loop {
              let opt_item=peer_manager_recv.poll().unwrap();
+             info!("[merged_recv] opeer_manager_msg {:?} \n", &opt_item);
 
              let opt_message = match opt_item {
                  OPeerManagerMessage::PeerAdded(info) => {
-                     info!("[merged_recv] PeerAdded -- Connected To Peer: {:?}\n", info);
                      Some(IUberMessage::Control(ControlMessage::PeerConnected(info)))
                  }
 
                  OPeerManagerMessage::PeerRemoved(info) => {
-                     info!("[merged_recv] PeerRemoved {:?} \n", info);
                      Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
                          info,
                      )))
                  }
 
                  OPeerManagerMessage::PeerDisconnect(info) => {
-                     info!("[merged_recv] PeerDisconnect {:?} \n", info);
                      Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
                          info,
                      )))
                  }
 
                  OPeerManagerMessage::PeerError(info, error) => {
-                     info!("[merged_recv] PeerError {:?} \n--msg: {:?}\n", info, error);
                      Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
                          info,
                      )))
@@ -176,7 +173,6 @@ fn main() {
                                info,
                                PeerWireProtocolMessage::BitsExtension(
                                    BitsExtensionMessage::Extended(extended))) => {
-                     info!("[merged_recv] BitsExtension : {:?}\n", &extended);
                      Some(IUberMessage::Extended(
                          IExtendedMessage::RecievedExtendedMessage(info, extended),
                      ))
@@ -186,7 +182,6 @@ fn main() {
                                info,
                                PeerWireProtocolMessage::ProtExtension(
                                    PeerExtensionProtocolMessage::UtMetadata(message))) => {
-                     info!("[merged_recv] UtMetadata : {:?}\n", &message.message_size());
                      Some(IUberMessage::Discovery(
                          IDiscoveryMessage::ReceivedUtMetadataMessage(info, message),
                      ))

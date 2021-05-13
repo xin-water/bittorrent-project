@@ -75,7 +75,7 @@ enum SelectState {
 enum Either{
     A(SelectState),
     B(IDiskMessage),
-    C(IPeerManagerMessage<UtpSocket>)
+    C(IPeerManagerMessage<TcpStream>)
 }
 
 fn main() {
@@ -150,7 +150,7 @@ fn main() {
                 .with_wait_buffer_size(0)
                 .with_done_buffer_size(0),
         )
-        .build(UtpTransport) // Will handshake over TCP (could swap this for UTP in the future)
+        .build(TcpTransport) // Will handshake over TCP (could swap this for UTP in the future)
         .unwrap()
         .into_parts();
 
@@ -454,13 +454,17 @@ fn main() {
     let mut blocks_pending = 0;
     loop {
         let msg = select_recv.recv().unwrap();
-        info!("[select loop]: {:?}", &msg);
+        info!("[select loop]: 接受到消息{:?}", &msg);
         let send_messages = match msg {
-            SelectState::BlockProcessed => {
-                // Disk manager let us know a block was processed (one of our requests made it
-                // from the peer manager, to the disk manager, and this is the acknowledgement)
-                blocks_pending -= 1;
-                vec![]
+            SelectState::BitField(info, msg) => {
+                // Peer choked us, cant be sending any requests to them for now
+                vec![
+                    IPeerManagerMessage::SendMessage(
+                        info,
+                        0,
+                        PeerWireProtocolMessage::Interested,
+                    )
+                ]
             }
             SelectState::Choke(_) => {
                 // Peer choked us, cant be sending any requests to them for now
@@ -490,13 +494,19 @@ fn main() {
                     ),
                 ]
             }
+            SelectState::BlockProcessed => {
+                // Disk manager let us know a block was processed (one of our requests made it
+                // from the peer manager, to the disk manager, and this is the acknowledgement)
+                blocks_pending -= 1;
+                vec![]
+            }
             SelectState::GoodPiece(piece) => {
                 // Disk manager has processed endough blocks to make up a piece, and that piece
                 // was verified to be good (checksummed). Go ahead and increment the number of
                 // pieces we have. We dont handle bad pieces here (since we deleted our request
                 // but ideally, we would recreate those requests and resend/blacklist the peer).
                 cur_pieces += 1;
-
+                info!("[select loop]: 已存储 {:?}",cur_pieces);
                 if let Some(peer) = opt_peer {
                     // Send our have message back to the peer
                     vec![IPeerManagerMessage::SendMessage(
@@ -518,48 +528,49 @@ fn main() {
 
 
         // Need a type annotation of this return type, provide that
+        info!("[select loop]: total_pieces {:?} cur_pieces {:?}",total_pieces,cur_pieces);
         if cur_pieces == total_pieces {
             // We have all of the (unique) pieces required for our torrent
             break;
+        }
 
-        } else if let Some(peer) = opt_peer {
+
+        if let Some(peer) = opt_peer {
             // We have peer contact info, if we are unchoked, see if we can queue up more requests
-            let next_piece_requests = {
-                if unchoked {
-                    let take_blocks =
-                        cmp::min(MAX_PENDING_BLOCKS - blocks_pending, piece_requests.len());
-                    blocks_pending += take_blocks;
+            let mut next_piece_requests =  vec![];
 
-                    piece_requests
-                        .drain(0..take_blocks)
-                        .map(move |item| {
-                            IPeerManagerMessage::SendMessage(
-                                peer,
-                                0,
-                                PeerWireProtocolMessage::Request(item),
-                            )
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                }
+            if unchoked {
 
-            };
+                let take_blocks = cmp::min(MAX_PENDING_BLOCKS - blocks_pending, piece_requests.len());
+
+                blocks_pending += take_blocks;
+
+                next_piece_requests = piece_requests
+                                      .drain(0..take_blocks)
+                                      .map(move |item| {
+                                            IPeerManagerMessage::SendMessage(
+                                                peer,
+                                                0,
+                                                PeerWireProtocolMessage::Request(item),
+                                            )
+                                      })
+                                      .collect();
+
+            }
+
 
             // First, send any control messages, then, send any more piece requests
             for msg in send_messages.into_iter(){
-                //info!("[select loop send msg]: {:?}\n", &msg);
+                info!("[select loop] send msg to peer: {:?}\n", &msg);
                 peer_manager_send.send(msg);
             }
 
             for msg in next_piece_requests.into_iter(){
-                //info!("[select loop send request]: {:?}\n", &msg);
+                info!("[select loop] send request : {:?}\n", &msg);
                 peer_manager_send.send(msg);
             }
 
-        } else {
-
-        };
+        }
     }
 
     info!("下载: 下载完成");
