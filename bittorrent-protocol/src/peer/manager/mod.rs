@@ -1,9 +1,20 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io;
-use std::io::{Read, Write};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
+use std::cmp;
+use crossbeam::queue::SegQueue;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::sync::mpsc::{self, Receiver, Sender};
+use futures::task::{self as futures_task, Task};
+use futures::{Async, AsyncSink, Poll, StartSend};
+use tokio::runtime::current_thread::Handle;
+use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_timer::{self, Timer};
 use std::sync::{Arc, Mutex};
+use crate::peer::message::PeerWireProtocolMessage;
 
 pub mod builder;
 use builder::PeerManagerBuilder;
@@ -12,12 +23,13 @@ pub mod peer_info;
 use peer_info::PeerInfo;
 
 pub mod error;
+use error::{PeerManagerError, PeerManagerErrorKind};
 
-use crate::peer::messages::PeerWireProtocolMessage;
-use std::net::TcpStream;
 
 mod task_one_thread;
 mod task_split;
+
+mod future;
 
 mod try_clone;
 pub use try_clone::TryClone;
@@ -33,12 +45,39 @@ pub struct PeerManager<S> {
 
 impl<S> PeerManager<S> {
     /// Create a new `PeerManager` from the given `PeerManagerBuilder`.
-    pub fn from_builder(builder: PeerManagerBuilder) -> PeerManager<S> {
-        let (res_send, res_recv) = mpsc::channel();
-        let peers = Arc::new(Mutex::new(HashMap::new()));
+    pub fn from_builder(builder: PeerManagerBuilder, handle: Handle) -> PeerManager<S> {
+        // We use one timer for manager heartbeat intervals, and one for peer heartbeat timeouts
+        let maximum_timers = builder.peer_capacity() * 2;
+        let pow_maximum_timers = if maximum_timers & (maximum_timers - 1) == 0 {
+            maximum_timers
+        } else {
+            maximum_timers.next_power_of_two()
+        };
 
-        let sink = PeerManagerSink::new(builder, res_send, peers.clone());
-        let stream = PeerManagerStream::new(res_recv, peers);
+        // Figure out the right tick duration to get num slots of 2048.
+        // TODO: We could probably let users change this in the future...
+        let max_duration = cmp::max(builder.heartbeat_interval(), builder.heartbeat_timeout());
+        let tick_duration = Duration::from_millis(max_duration.as_secs() * 1000 / (DEFAULT_TIMER_SLOTS as u64) + 1);
+        let timer = tokio_timer::wheel()
+            .tick_duration(tick_duration)
+            .max_capacity(pow_maximum_timers + 1)
+            .channel_capacity(pow_maximum_timers)
+            .num_slots(DEFAULT_TIMER_SLOTS)
+            .build();
+
+        let (res_send, res_recv) = mpsc::channel(builder.stream_buffer_capacity());
+        let peers = Arc::new(Mutex::new(HashMap::new()));
+        let task_queue = Arc::new(SegQueue::new());
+
+        let sink = PeerManagerSink::new(
+            handle,
+            timer,
+            builder,
+            res_send,
+            peers.clone(),
+            task_queue.clone(),
+        );
+        let stream = PeerManagerStream::new(res_recv, peers, task_queue);
 
         PeerManager {
             sink: sink,
@@ -54,19 +93,31 @@ impl<S> PeerManager<S> {
     }
 }
 
-impl<S> PeerManager<S>
-    where S: Read + Write + TryClone + Send + 'static,
-    <S as TryClone>::Item: Send{
+impl<S> Sink for PeerManager<S>
+    where S: AsyncRead + AsyncWrite + Send + Sized + 'static{
 
-    pub fn send(&mut self, item: IPeerManagerMessage<S>){
-        self.sink.send(item)
+    type SinkItem = IPeerManagerMessage<S>;
+    type SinkError = PeerManagerError;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        self.sink.start_send(item)
     }
 
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        self.sink.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        self.sink.close()
+    }
 }
 
-impl<S> PeerManager<S> {
+impl<S> Stream for PeerManager<S> {
+    type Item = OPeerManagerMessage;
+    type Error = ();
 
-    pub fn poll(&mut self) -> Option<OPeerManagerMessage>{
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.stream.poll()
     }
 }
@@ -75,92 +126,236 @@ impl<S> PeerManager<S> {
 
 /// Sink half of a `PeerManager`.
 pub struct PeerManagerSink<S> {
+    handle: Handle,
+    timer: Timer,
     build: PeerManagerBuilder,
     send: Sender<OPeerManagerMessage>,
     peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
+    task_queue: Arc<SegQueue<Task>>,
 }
 
 impl<S> Clone for PeerManagerSink<S> {
     fn clone(&self) -> PeerManagerSink<S> {
         PeerManagerSink {
+            handle: self.handle.clone(),
+            timer: self.timer.clone(),
             build: self.build,
             send: self.send.clone(),
             peers: self.peers.clone(),
+            task_queue: self.task_queue.clone(),
         }
     }
 }
 
 impl<S> PeerManagerSink<S> {
     fn new(
+        handle: Handle,
+        timer: Timer,
         build: PeerManagerBuilder,
         send: Sender<OPeerManagerMessage>,
         peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
+        task_queue: Arc<SegQueue<Task>>,
     ) -> PeerManagerSink<S> {
         PeerManagerSink {
+            handle: handle,
+            timer: timer,
             build: build,
             send: send,
             peers: peers,
+            task_queue: task_queue,
         }
     }
 
-    fn run_with_lock_sink<F, I>(&mut self, item: I, call: F)
+    fn run_with_lock_sink<F, T, E, G, I>(&mut self, item: I, call: F, not: G) -> StartSend<T, E>
     where
         F: FnOnce(
             I,
+            &mut Handle,
+            &mut Timer,
             &mut PeerManagerBuilder,
             &mut Sender<OPeerManagerMessage>,
             &mut HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>,
-        ),
+        ) -> StartSend<T, E>,
+        G: FnOnce(I) -> T,
     {
-        while let Ok(mut guard) = self.peers.try_lock() {
-            let _result = call(item, &mut self.build, &mut self.send, &mut *guard);
-            break;
+        let (result, took_lock) = if let Ok(mut guard) = self.peers.try_lock() {
+            let result = call(
+                item,
+                &mut self.handle,
+                &mut self.timer,
+                &mut self.build,
+                &mut self.send,
+                &mut *guard,
+            );
+
+            // Closure could return not ready, need to stash in that case
+            if result
+                .as_ref()
+                .map(|var| var.is_not_ready())
+                .unwrap_or(false)
+            {
+                self.task_queue.push(futures_task::current());
+            }
+
+            (result, true)
+        } else {
+            self.task_queue.push(futures_task::current());
+
+            if let Ok(mut guard) = self.peers.try_lock() {
+                let result = call(
+                    item,
+                    &mut self.handle,
+                    &mut self.timer,
+                    &mut self.build,
+                    &mut self.send,
+                    &mut *guard,
+                );
+
+                // Closure could return not ready, need to stash in that case
+                if result
+                    .as_ref()
+                    .map(|var| var.is_not_ready())
+                    .unwrap_or(false)
+                {
+                    self.task_queue.push(futures_task::current());
+                }
+
+                (result, true)
+            } else {
+                (Ok(AsyncSink::NotReady(not(item))), false)
+            }
+        };
+
+        if took_lock {
+            // Just notify a single person waiting on the lock to reduce contention
+            self.task_queue.pop().map(|task| task.notify());
         }
+
+        result
+    }
+
+    fn run_with_lock_poll<F, T, E>(&mut self, call: F) -> Poll<T, E>
+    where
+        F: FnOnce(
+            &mut Handle,
+            &mut Timer,
+            &mut PeerManagerBuilder,
+            &mut Sender<OPeerManagerMessage>,
+            &mut HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>,
+        ) -> Poll<T, E>,
+    {
+        let (result, took_lock) = if let Ok(mut guard) = self.peers.try_lock() {
+            let result = call(
+                &mut self.handle,
+                &mut self.timer,
+                &mut self.build,
+                &mut self.send,
+                &mut *guard,
+            );
+
+            (result, true)
+        } else {
+            // Stash a task
+            self.task_queue.push(futures_task::current());
+
+            // Try to get lock again in case of race condition
+            if let Ok(mut guard) = self.peers.try_lock() {
+                let result = call(
+                    &mut self.handle,
+                    &mut self.timer,
+                    &mut self.build,
+                    &mut self.send,
+                    &mut *guard,
+                );
+
+                (result, true)
+            } else {
+                (Ok(Async::NotReady), false)
+            }
+        };
+
+        if took_lock {
+            // Just notify a single person waiting on the lock to reduce contention
+            self.task_queue.pop().map(|task| task.notify());
+        }
+
+        result
     }
 }
 
-impl<S> PeerManagerSink<S>
-    where S: Read + Write + TryClone + Send + 'static,
-          <S as TryClone>::Item: Send{
+impl<S> Sink for PeerManagerSink<S>
+    where S: AsyncRead + AsyncWrite + Send + Sized + 'static {
 
-    pub fn send(&mut self, item: IPeerManagerMessage<S>) {
+    type SinkItem = IPeerManagerMessage<S>;
+    type SinkError = PeerManagerError;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         match item {
-            IPeerManagerMessage::AddPeer(info, peer) => {
-                self.run_with_lock_sink((info, peer), |(info, peer), builder, send, peers| {
+            IPeerManagerMessage::AddPeer(info, peer) => self.run_with_lock_sink(
+                (info, peer),
+                |(info, peer), handle, timer, builder, send, peers| {
                     if peers.len() >= builder.peer_capacity() {
-                        panic!("bittorrent-protocol_peer: PeerManager Failed To Send AddPeer");
+                        Ok(AsyncSink::NotReady(IPeerManagerMessage::AddPeer(info, peer)))
                     } else {
                         match peers.entry(info) {
-                            Entry::Occupied(_) => panic!(
-                                "bittorrent-protocol_peer: PeerManager Failed To Send AddPeer"
-                            ),
+                            Entry::Occupied(_) => Err(PeerManagerError::from_kind(PeerManagerErrorKind::PeerNotFound { info: info })),
                             Entry::Vacant(vac) => {
-                                vac.insert(task_split::run_peer(peer, info, send.clone()));
+                                vac.insert(task_split::run_peer(peer, info, send.clone(), timer.clone(), builder, handle));
+
+                                Ok(AsyncSink::Ready)
                             }
                         }
                     }
-                })
-            }
-            IPeerManagerMessage::RemovePeer(info) => {
-                self.run_with_lock_sink(info, |info, _, _, peers| {
+                },
+                |(info, peer)| IPeerManagerMessage::AddPeer(info, peer),
+            ),
+            IPeerManagerMessage::RemovePeer(info) => self.run_with_lock_sink(
+                info,
+                |info, _, _, _, _, peers| {
                     peers
                         .get_mut(&info)
-                        .unwrap()
-                        .send(IPeerManagerMessage::RemovePeer(info))
-                        .expect("bittorrent-protocol_peer: PeerManager Failed To Send RemovePeer");
-                })
-            }
+                        .ok_or_else(|| PeerManagerError::from_kind(PeerManagerErrorKind::PeerNotFound { info: info }))
+                        .and_then(|send| {
+                            send.start_send(IPeerManagerMessage::RemovePeer(info))
+                                .map_err(|_| panic!("bittorrent-protocol_peer: PeerManager Failed To Send RemovePeer"))
+                        })
+                },
+                |info| IPeerManagerMessage::RemovePeer(info),
+            ),
             IPeerManagerMessage::SendMessage(info, mid, peer_message) => self.run_with_lock_sink(
                 (info, mid, peer_message),
-                |(info, mid, peer_message), _, _, peers| {
+                |(info, mid, peer_message), _, _, _, _, peers| {
                     peers
                         .get_mut(&info)
-                        .unwrap()
-                        .send(IPeerManagerMessage::SendMessage(info, mid, peer_message))
-                        .expect("bittorrent-protocol_peer: PeerManager Failed to Send SendMessage");
+                        .ok_or_else(|| PeerManagerError::from_kind(PeerManagerErrorKind::PeerNotFound { info: info }))
+                        .and_then(|send| {
+                            send.start_send(IPeerManagerMessage::SendMessage(info, mid, peer_message))
+                                .map_err(|_| panic!("bittorrent-protocol_peer: PeerManager Failed to Send SendMessage"))
+                        })
                 },
+                |(info, mid, peer_message)| IPeerManagerMessage::SendMessage(info, mid, peer_message),
             ),
         }
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        self.run_with_lock_poll(|_, _, _, _, peers| {
+            for peer_mut in peers.values_mut() {
+                // Needs type hint in case poll fails (so that error type matches)
+                let result: Poll<(), Self::SinkError> = peer_mut.poll_complete().map_err(|_| {
+                    panic!("bittorrent-protocol_peer: PeerManaged Failed To Poll Peer")
+                });
+
+                result?;
+            }
+
+            Ok(Async::Ready(()))
+        })
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        Ok(futures::Async::Ready(()))
     }
 }
 
@@ -170,93 +365,114 @@ impl<S> PeerManagerSink<S>
 pub struct PeerManagerStream<S> {
     recv: Receiver<OPeerManagerMessage>,
     peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
-    opt_pending: Option<OPeerManagerMessage>,
+    task_queue: Arc<SegQueue<Task>>,
+    opt_pending: Option<Option<OPeerManagerMessage>>,
 }
 
 impl<S> PeerManagerStream<S> {
     fn new(
         recv: Receiver<OPeerManagerMessage>,
         peers: Arc<Mutex<HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>>>,
+        task_queue: Arc<SegQueue<Task>>,
     ) -> PeerManagerStream<S> {
         PeerManagerStream {
             recv: recv,
             peers: peers,
+            task_queue: task_queue,
             opt_pending: None,
         }
     }
 
-    fn run_with_lock_poll<F, I, G>(
-        &mut self,
-        item: I,
-        call: F,
-        not: G,
-    ) -> Option<OPeerManagerMessage>
+    fn run_with_lock_poll<F, T, E, I, G>(&mut self, item: I, call: F, not: G) -> Poll<T, E>
     where
-        F: FnOnce(
-            I,
-            &mut HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>,
-        ) -> Option<OPeerManagerMessage>,
+        F: FnOnce(I, &mut HashMap<PeerInfo, Sender<IPeerManagerMessage<S>>>) -> Poll<T, E>,
         G: FnOnce(I) -> Option<OPeerManagerMessage>,
     {
-        if let Ok(mut guard) = self.peers.try_lock() {
+        let (result, took_lock) = if let Ok(mut guard) = self.peers.try_lock() {
             let result = call(item, &mut *guard);
 
             // Nothing calling us will return NotReady, so we dont have to push to queue here
-            result
-        } else {
-            // If we couldnt get the lock, stash the item
-            self.opt_pending = not(item);
 
-            None
+            (result, true)
+        } else {
+            // Couldnt get the lock, stash a task away
+            self.task_queue.push(futures_task::current());
+
+            // Try to get the lock once more, in case of a race condition with stashing the task
+            if let Ok(mut guard) = self.peers.try_lock() {
+                let result = call(item, &mut *guard);
+
+                // Nothing calling us will return NotReady, so we dont have to push to queue here
+
+                (result, true)
+            } else {
+                // If we couldnt get the lock, stash the item
+                self.opt_pending = Some(not(item));
+
+                (Ok(Async::NotReady), false)
+            }
+        };
+
+        if took_lock {
+            // Just notify a single person waiting on the lock to reduce contention
+            self.task_queue.pop().map(|task| task.notify());
         }
+
+        result
     }
 }
 
-impl<S> PeerManagerStream<S> {
-    pub fn poll(&mut self) -> Option<OPeerManagerMessage> {
+impl<S> Stream for PeerManagerStream<S> {
+
+    type Item = OPeerManagerMessage;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         // Intercept and propogate any messages indicating the peer shutdown so we can remove them from our peer map
         let next_message = self
             .opt_pending
             .take()
-            .map(|pending| pending)
-            .unwrap_or_else(|| self.recv.recv().unwrap());
+            .map(|pending| Ok(Async::Ready(pending)))
+            .unwrap_or_else(|| self.recv.poll());
 
-        match next_message{
-                OPeerManagerMessage::PeerRemoved(info) => self.run_with_lock_poll(
+        next_message.and_then(|result|{
+            match result {
+                Async::Ready(Some(OPeerManagerMessage::PeerRemoved(info))) => self.run_with_lock_poll(
                     info,
                     |info, peers| {
                         peers
                             .remove(&info)
                             .unwrap_or_else(|| panic!("bittorrent-protocol_peer: Received PeerRemoved Message With No Matching Peer In Map"));
 
-                       Some(OPeerManagerMessage::PeerRemoved(info))
+                        Ok(Async::Ready(Some(OPeerManagerMessage::PeerRemoved(info))))
                     },
                     |info| Some(OPeerManagerMessage::PeerRemoved(info)),
                 ),
-                OPeerManagerMessage::PeerDisconnect(info) => self.run_with_lock_poll(
+                Async::Ready(Some(OPeerManagerMessage::PeerDisconnect(info))) => self.run_with_lock_poll(
                     info,
                     |info, peers| {
                         peers
                             .remove(&info)
                             .unwrap_or_else(|| panic!("bittorrent-protocol_peer: Received PeerDisconnect Message With No Matching Peer In Map"));
 
-                        Some(OPeerManagerMessage::PeerDisconnect(info))
+                        Ok(Async::Ready(Some(OPeerManagerMessage::PeerDisconnect(info))))
                     },
                     |info| Some(OPeerManagerMessage::PeerDisconnect(info)),
                 ),
-                OPeerManagerMessage::PeerError(info, error) => self.run_with_lock_poll(
+                Async::Ready(Some(OPeerManagerMessage::PeerError(info, error))) => self.run_with_lock_poll(
                     (info, error),
                     |(info, error), peers| {
                         peers
                             .remove(&info)
                             .unwrap_or_else(|| panic!("bittorrent-protocol_peer: Received PeerError Message With No Matching Peer In Map"));
 
-                        Some(OPeerManagerMessage::PeerError(info, error))
+                        Ok(Async::Ready(Some(OPeerManagerMessage::PeerError(info, error))))
                     },
                     |(info, error)| Some(OPeerManagerMessage::PeerError(info, error)),
                 ),
-                other => Some(other),
+                other => Ok(other),
             }
+        })
     }
 }
 

@@ -1,4 +1,9 @@
+use std::io;
 use std::time::Duration;
+
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio::runtime::current_thread::Handle;
 
 use super::{ManagedMessage, PeerManager};
 
@@ -86,7 +91,7 @@ impl PeerManagerBuilder {
     }
 
     /// Build a `PeerManager` from the current `PeerManagerBuilder`.
-    pub fn build<S>(self) -> PeerManager<S>{
-        PeerManager::from_builder(self)
+    pub fn build<S> (self, handle: Handle) -> PeerManager<S> {
+        PeerManager::from_builder(self, handle)
     }
 }
