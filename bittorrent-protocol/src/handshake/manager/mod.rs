@@ -43,7 +43,7 @@ impl HandshakerManagerBuilder {
     /// Create a new `HandshakerBuilder`.
     pub fn new() -> HandshakerManagerBuilder {
         let default_v4_addr = Ipv4Addr::new(0, 0, 0, 0);
-        let default_v4_port = 0;
+        let default_v4_port = 22222;
 
         let default_sock_addr = SocketAddr::V4(SocketAddrV4::new(default_v4_addr, default_v4_port));
 
