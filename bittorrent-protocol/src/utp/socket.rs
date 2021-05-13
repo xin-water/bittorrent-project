@@ -1103,6 +1103,8 @@ impl UtpSocket {
 ///                        .expect("Couldn't connect to the server...");
 /// let socket_clone = socket.try_clone().expect("clone failed...");
 /// ```
+/// 该方法未完成，使用时会出现错误
+    #[warn(unstable_features)]
    pub fn try_clone(&self) -> io::Result<UtpSocket> {
 
     let mut socket = self.socket.try_clone().expect("UtpSocket clone fail");
