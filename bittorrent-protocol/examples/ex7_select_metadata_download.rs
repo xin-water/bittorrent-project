@@ -79,6 +79,7 @@ fn main() {
     let info_hash = InfoHash::from_hash(&hash[..]).unwrap();
 
     let peer_id:PeerId = (*b"-UT2060-000000000000").into();
+    let addr = "127.0.0.1:44444";
 
     // Activate the extension protocol via the handshake bits
     let mut extensions = Extensions::new();
@@ -230,7 +231,7 @@ fn main() {
         InitiateMessage::new(
             Protocol::BitTorrent,
             info_hash,
-            "127.0.0.1:44444".parse().unwrap()
+            addr.parse().unwrap()
         )
     ).unwrap();
 
