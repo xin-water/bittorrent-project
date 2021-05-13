@@ -1,7 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use std::sync::mpsc::{Receiver};
+use crossbeam::queue::SegQueue;
+use futures::sync::mpsc::{self, Receiver};
+use futures::task::{self, Task};
+use futures::{Async, AsyncSink, Poll, Sink, StartSend, Stream};
 use threadpool::ThreadPool;
 
 use crate::disk::tasks;
@@ -17,22 +20,23 @@ pub struct DiskManager<F> {
 impl<F> DiskManager<F> {
     /// Create a `DiskManager` from the given `DiskManagerBuilder`.
     pub fn from_builder(mut builder: DiskManagerBuilder, fs: F) -> DiskManager<F> {
-        let buffer_capacity = builder.get_buffer_capacity();
-        let cur_buffer_capacity = Arc::new(AtomicUsize::new(0));
+        let cur_sink_capacity = Arc::new(AtomicUsize::new(0));
+        let sink_capacity = builder.sink_buffer_capacity();
+        let stream_capacity = builder.stream_buffer_capacity();
         let pool_builder = builder.worker_config();
 
-        //let (out_send, out_recv) = tokio::sync::mpsc::channel(stream_capacity);
-        let (out_send, out_recv) = std::sync::mpsc::channel();
-
+        let (out_send, out_recv) = mpsc::channel(stream_capacity);
         let context = DiskManagerContext::new(out_send, fs);
+        let task_queue = Arc::new(SegQueue::new());
 
         let sink = DiskManagerSink::new(
             pool_builder.build(),
             context,
-            buffer_capacity,
-            cur_buffer_capacity.clone(),
+            sink_capacity,
+            cur_sink_capacity.clone(),
+            task_queue.clone(),
         );
-        let stream = DiskManagerStream::new(out_recv, cur_buffer_capacity);
+        let stream = DiskManagerStream::new(out_recv, cur_sink_capacity, task_queue.clone());
 
         DiskManager {
             sink: sink,
@@ -47,6 +51,38 @@ impl<F> DiskManager<F> {
         (self.sink, self.stream)
     }
 }
+
+impl<F> Sink for DiskManager<F>
+where
+    F: FileSystem + Send + Sync + 'static,
+{
+    type SinkItem = IDiskMessage;
+    type SinkError = ();
+
+    fn start_send(&mut self, item: IDiskMessage) -> StartSend<IDiskMessage, ()> {
+        self.sink.start_send(item)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), ()> {
+        self.sink.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        // Ok(futures::Async::Ready(()))
+        self.sink.close()
+    }
+}
+
+impl<F> Stream for DiskManager<F> {
+    type Item = ODiskMessage;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<ODiskMessage>, ()> {
+        self.stream.poll()
+    }
+}
+
 //----------------------------------------------------------------------------//
 
 /// `DiskManagerSink` which is the sink portion of a `DiskManager`.
@@ -55,6 +91,7 @@ pub struct DiskManagerSink<F> {
     context: DiskManagerContext<F>,
     max_capacity: usize,
     cur_capacity: Arc<AtomicUsize>,
+    task_queue: Arc<SegQueue<Task>>,
 }
 
 impl<F> Clone for DiskManagerSink<F> {
@@ -64,6 +101,7 @@ impl<F> Clone for DiskManagerSink<F> {
             context: self.context.clone(),
             max_capacity: self.max_capacity,
             cur_capacity: self.cur_capacity.clone(),
+            task_queue: self.task_queue.clone(),
         }
     }
 }
@@ -74,12 +112,14 @@ impl<F> DiskManagerSink<F> {
         context: DiskManagerContext<F>,
         max_capacity: usize,
         cur_capacity: Arc<AtomicUsize>,
+        task_queue: Arc<SegQueue<Task>>,
     ) -> DiskManagerSink<F> {
         DiskManagerSink {
             pool: pool,
             context: context,
             max_capacity: max_capacity,
             cur_capacity: cur_capacity,
+            task_queue: task_queue,
         }
     }
 
@@ -96,22 +136,48 @@ impl<F> DiskManagerSink<F> {
     }
 }
 
-impl<F> DiskManagerSink<F>
+impl<F> Sink for DiskManagerSink<F>
 where
     F: FileSystem + Send + Sync + 'static,
 {
-    pub fn send(self: &mut Self, item: IDiskMessage) -> Result<(), IDiskMessage> {
+    type SinkItem = IDiskMessage;
+    type SinkError = ();
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         info!("Starting Send For DiskManagerSink With IDiskMessage");
 
         if self.try_submit_work() {
-            // Receiver will look at the queue but wake us up, even though we dont need it to now...
-            info!("DiskManagerSink Submitted Work On Attempt");
-            tasks::execute_on_pool(item, self.pool.clone(), self.context.clone());
-            return Ok(());
-        } else {
-            info!("DiskManagerSink Submitted Work fail");
-            Err(item)
+            info!("DiskManagerSink Submitted Work On First Attempt");
+            tasks::execute_on_pool(item, &self.pool, self.context.clone());
+
+            return Ok(AsyncSink::Ready);
         }
+
+        // We split the sink and stream, which means these could be polled in different event loops (I think),
+        // so we need to add our task, but then try to sumbit work again, in case the receiver processed work
+        // right after we tried to submit the first time.
+        info!("DiskManagerSink Failed To Submit Work On First Attempt, Adding Task To Queue");
+        self.task_queue.push(task::current());
+
+        if self.try_submit_work() {
+            // Receiver will look at the queue but wake us up, even though we dont need it to now...
+            info!("DiskManagerSink Submitted Work On Second Attempt");
+            tasks::execute_on_pool(item, &self.pool, self.context.clone());
+
+            return Ok(AsyncSink::Ready);
+        } else {
+            // Receiver will look at the queue eventually...
+            Ok(AsyncSink::NotReady(item))
+        }
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        Ok(Async::Ready(()))
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        Ok(futures::Async::Ready(()))
     }
 }
 
@@ -121,13 +187,19 @@ where
 pub struct DiskManagerStream {
     recv: Receiver<ODiskMessage>,
     cur_capacity: Arc<AtomicUsize>,
+    task_queue: Arc<SegQueue<Task>>,
 }
 
 impl DiskManagerStream {
-    fn new(recv: Receiver<ODiskMessage>, cur_capacity: Arc<AtomicUsize>) -> DiskManagerStream {
+    fn new(
+        recv: Receiver<ODiskMessage>,
+        cur_capacity: Arc<AtomicUsize>,
+        task_queue: Arc<SegQueue<Task>>,
+    ) -> DiskManagerStream {
         DiskManagerStream {
             recv: recv,
             cur_capacity: cur_capacity,
+            task_queue: task_queue,
         }
     }
 
@@ -136,24 +208,34 @@ impl DiskManagerStream {
     }
 }
 
-impl DiskManagerStream {
-    pub fn next(self: &mut Self) -> Option<ODiskMessage> {
+impl Stream for DiskManagerStream {
+    type Item = ODiskMessage;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<ODiskMessage>, ()> {
         info!("Polling DiskManagerStream For ODiskMessage");
 
-        match self.recv.recv() {
-            res @ Ok(ODiskMessage::TorrentAdded(_))
-            | res @ Ok(ODiskMessage::TorrentRemoved(_))
-            | res @ Ok(ODiskMessage::TorrentSynced(_))
-            | res @ Ok(ODiskMessage::BlockLoaded(_))
-            | res @ Ok(ODiskMessage::BlockProcessed(_)) => {
+        match self.recv.poll() {
+            res @ Ok(Async::Ready(Some(ODiskMessage::TorrentAdded(_))))
+            | res @ Ok(Async::Ready(Some(ODiskMessage::TorrentRemoved(_))))
+            | res @ Ok(Async::Ready(Some(ODiskMessage::TorrentSynced(_))))
+            | res @ Ok(Async::Ready(Some(ODiskMessage::BlockLoaded(_))))
+            | res @ Ok(Async::Ready(Some(ODiskMessage::BlockProcessed(_)))) => {
                 self.complete_work();
-                Some(res.unwrap())
-            }
-            Err(_x) => {
-                panic!("DiskManagerStream recv err");
-            }
 
-            other => Some(other.unwrap()),
+                info!("Notifying DiskManager That We Can Submit More Work");
+                loop {
+                    match self.task_queue.pop() {
+                        Some(task) => task.notify(),
+                        None => {
+                            break;
+                        }
+                    }
+                }
+
+                res
+            }
+            other => other,
         }
     }
 }

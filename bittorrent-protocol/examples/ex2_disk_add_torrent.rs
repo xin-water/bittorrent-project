@@ -10,6 +10,9 @@ use simplelog::*;
 use bittorrent_protocol::metainfo::Metainfo;
 use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
+use futures::future::{self, Future, Loop};
+use futures::{Sink, Stream};
+use tokio::runtime::Runtime;
 
 fn main() {
     CombinedLogger::init(
@@ -47,33 +50,42 @@ fn main() {
 
     let disk_manager = DiskManagerBuilder::new().build(native_fs);
 
-    let (mut disk_send, mut disk_recv) = disk_manager.into_parts();
+    let (mut disk_send, mut disk_recv) = disk_manager.split();
 
     let total_pieces = metainfo_file.info().pieces().count();
 
+    let mut runtime = Runtime::new().unwrap();
     println!("{:?}: start send msg ", Local::now().naive_local());
-    disk_send.send(IDiskMessage::AddTorrent(metainfo_file));
+    runtime.block_on(disk_send.send(IDiskMessage::AddTorrent(metainfo_file)));
     println!("{:?}: end send msg ", Local::now().naive_local());
 
     let mut good_pieces = 0;
-
-    loop {
-        let recv_msg = disk_recv.next();
-        match recv_msg.unwrap() {
-            ODiskMessage::FoundGoodPiece(_, _) => {
-                good_pieces += 1;
-                debug!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
-            }
-            ODiskMessage::TorrentAdded(hash) => {
-                println!();
-                debug!("Torrent With Hash {:?} Successfully Added", hash);
-                debug!(
-                    "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
-                    good_pieces, total_pieces
-                );
-                break;
-            }
-            unexpected @ _ => panic!("Unexpected ODiskMessage {:?}", unexpected),
-        }
-    }
+    runtime.block_on(
+        future::loop_fn((good_pieces, disk_recv), move |(mut good_pieces, disk_recv)| {
+            disk_recv
+                .into_future()
+                .map(move |(mut recv_msg, mut disk_recv)| {
+                    println!("{:?}: msg: {:?}", Local::now().naive_local(), &recv_msg);
+                    match recv_msg.unwrap() {
+                        ODiskMessage::FoundGoodPiece(_, _) => {
+                            good_pieces += 1;
+                            Loop::Continue((good_pieces, disk_recv))
+                        }
+                        ODiskMessage::TorrentAdded(hash) => {
+                            println!();
+                            println!("Torrent With Hash {:?} Successfully Added", hash);
+                            println!(
+                                "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
+                                good_pieces, total_pieces
+                            );
+                            Loop::Break(good_pieces)
+                        }
+                        unexpected @ _ => panic!("Unexpected ODiskMessage {:?}", unexpected),
+                    }
+                })
+        })
+            .map_err(|x| {})
+            .map(|item| item),
+    )
+        .unwrap_or_else(|_| panic!("Core Loop Timed Out"));
 }
