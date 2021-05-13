@@ -2,10 +2,12 @@ use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::io;
 
+use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
 use crate::disk::error::{TorrentError, TorrentErrorKind, TorrentResult};
 use crate::disk::tasks::helpers;
 use crate::disk::tasks::helpers::piece_accessor::PieceAccessor;
-use crate::disk::{BlockMetadata, FileSystem};
+use crate::disk::{BlockMetadata, FileSystem, ODiskMessage};
 use crate::metainfo::Info;
 use crate::util::bt::InfoHash;
 

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 
+use futures::sink::Sink;
 use crate::disk::tasks::helpers::piece_checker::PieceCheckerState;
 use crate::disk::ODiskMessage;
 use crate::metainfo::Metainfo;

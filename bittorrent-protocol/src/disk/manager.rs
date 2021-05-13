@@ -4,6 +4,13 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver};
 use threadpool::ThreadPool;
 
+use std::pin::Pin;
+use std::task::Poll;
+use futures::task::Context;
+use futures::{
+    Future, FutureExt, Sink, SinkExt, Stream, StreamExt, TryFuture, TryFutureExt, TryStream,
+    TryStreamExt,
+};
 use crate::disk::tasks;
 use crate::disk::tasks::context::DiskManagerContext;
 use crate::disk::{DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage};
@@ -17,8 +24,9 @@ pub struct DiskManager<F> {
 impl<F> DiskManager<F> {
     /// Create a `DiskManager` from the given `DiskManagerBuilder`.
     pub fn from_builder(mut builder: DiskManagerBuilder, fs: F) -> DiskManager<F> {
-        let buffer_capacity = builder.get_buffer_capacity();
-        let cur_buffer_capacity = Arc::new(AtomicUsize::new(0));
+        let sink_capacity = builder.sink_buffer_capacity();
+        let stream_capacity = builder.stream_buffer_capacity();
+        let cur_sink_capacity = Arc::new(AtomicUsize::new(0));
         let pool_builder = builder.worker_config();
 
         //let (out_send, out_recv) = tokio::sync::mpsc::channel(stream_capacity);
@@ -29,10 +37,10 @@ impl<F> DiskManager<F> {
         let sink = DiskManagerSink::new(
             pool_builder.build(),
             context,
-            buffer_capacity,
-            cur_buffer_capacity.clone(),
+            sink_capacity,
+            cur_sink_capacity.clone(),
         );
-        let stream = DiskManagerStream::new(out_recv, cur_buffer_capacity);
+        let stream = DiskManagerStream::new(out_recv, cur_sink_capacity);
 
         DiskManager {
             sink: sink,
@@ -47,6 +55,38 @@ impl<F> DiskManager<F> {
         (self.sink, self.stream)
     }
 }
+/*
+impl<F> Sink<IDiskMessage> for DiskManager<F>
+where
+    F: FileSystem + Send + Sync + 'static,
+{
+    type Error = ();
+
+    fn start_send(self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
+        self.sink.start_send(item)
+    }
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.sink.poll_ready()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.sink.poll_flush()
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.sink.poll_close()
+    }
+}
+
+impl<F> Stream for DiskManager<F> {
+    type Item = ODiskMessage;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.stream.poll_next()
+    }
+}*/
+
 //----------------------------------------------------------------------------//
 
 /// `DiskManagerSink` which is the sink portion of a `DiskManager`.
@@ -96,12 +136,27 @@ impl<F> DiskManagerSink<F> {
     }
 }
 
-impl<F> DiskManagerSink<F>
+impl<F> Sink<IDiskMessage> for DiskManagerSink<F>
 where
     F: FileSystem + Send + Sync + 'static,
 {
-    pub fn send(self: &mut Self, item: IDiskMessage) -> Result<(), IDiskMessage> {
+    type Error = ();
+
+    fn start_send(self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
         info!("Starting Send For DiskManagerSink With IDiskMessage");
+
+        if self.try_submit_work() {
+            info!("DiskManagerSink Submitted Work On First Attempt");
+            tasks::execute_on_pool(item, self.pool.clone(), self.context.clone());
+
+            return Ok(());
+        }
+
+        // We split the sink and stream, which means these could be polled in different event loops (I think),
+        // so we need to add our task, but then try to sumbit work again, in case the receiver processed work
+        // right after we tried to submit the first time.
+        info!("DiskManagerSink Failed To Submit Work On First Attempt, Adding Task To Queue");
+        //self.task_queue.push(task::current());
 
         if self.try_submit_work() {
             // Receiver will look at the queue but wake us up, even though we dont need it to now...
@@ -110,8 +165,22 @@ where
             return Ok(());
         } else {
             info!("DiskManagerSink Submitted Work fail");
-            Err(item)
+            Err(())
+            // Ok(AsyncSink::NotReady(item))
         }
+    }
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // unimplemented!()
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -136,8 +205,10 @@ impl DiskManagerStream {
     }
 }
 
-impl DiskManagerStream {
-    pub fn next(self: &mut Self) -> Option<ODiskMessage> {
+impl Stream for DiskManagerStream {
+    type Item = ODiskMessage;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         info!("Polling DiskManagerStream For ODiskMessage");
 
         match self.recv.recv() {
@@ -147,13 +218,9 @@ impl DiskManagerStream {
             | res @ Ok(ODiskMessage::BlockLoaded(_))
             | res @ Ok(ODiskMessage::BlockProcessed(_)) => {
                 self.complete_work();
-                Some(res.unwrap())
+                Poll::Ready(Some(res.unwrap()))
             }
-            Err(_x) => {
-                panic!("DiskManagerStream recv err");
-            }
-
-            other => Some(other.unwrap()),
+            other => Poll::Ready(Some(other.unwrap())),
         }
     }
 }

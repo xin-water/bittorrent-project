@@ -12,13 +12,14 @@ use self::context::DiskManagerContext;
 mod helpers;
 use self::helpers::piece_accessor::PieceAccessor;
 use self::helpers::piece_checker::{PieceChecker, PieceCheckerState, PieceState};
+use std::sync::Arc;
 
 pub fn execute_on_pool<F>(msg: IDiskMessage, pool: ThreadPool, context: DiskManagerContext<F>)
 where
     F: FileSystem + Send + Sync + 'static,
 {
     pool.execute(move || {
-        let  blocking_sender = context.blocking_sender();
+        let mut blocking_sender = context.blocking_sender();
 
         let out_msg = match msg {
             IDiskMessage::AddTorrent(metainfo) => {
