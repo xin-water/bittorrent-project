@@ -127,7 +127,7 @@ fn main() {
     // Parse out our torrent file
     let metainfo = Metainfo::from_bytes(metainfo_bytes).unwrap();
     let info_hash = metainfo.info().info_hash();
-    println!("info-hash:{:?}", hex::encode(&info_hash));
+    info!("info-hash:{:?}", hex::encode(&info_hash));
 
     let peer_id:PeerId = (*b"-UT2060-000000000000").into();
 
@@ -207,23 +207,23 @@ fn main() {
         loop {
             let opt_message = match peer_manager_recv.poll().unwrap() {
                 OPeerManagerMessage::PeerAdded(info) => {
-                    println!("[peer loop]: PeerAdded \n");
+                    info!("[peer loop]: PeerAdded \n");
                     Some(Either::A(SelectState::NewPeer(info)))
                 }
                 OPeerManagerMessage::SentMessage(_, _) => None,
                 OPeerManagerMessage::PeerRemoved(info) => {
-                    println!(
+                    info!(
                         "We Removed Peer {:?} \n------------From The Peer Manager",
                         info
                     );
                     Some(Either::A(SelectState::RemovedPeer(info)))
                 }
                 OPeerManagerMessage::PeerDisconnect(info) => {
-                    println!("Peer {:?} \n------------Disconnected From Us", info);
+                    info!("Peer {:?} \n------------Disconnected From Us", info);
                     Some(Either::A(SelectState::RemovedPeer(info)))
                 }
                 OPeerManagerMessage::PeerError(info, error) => {
-                    println!(
+                    info!(
                         "Peer {:?} \n------------Disconnected With Error: {:?}",
                         info, error
                     );
@@ -392,29 +392,16 @@ fn main() {
 
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    println!(
-        "{:?} 添加种子并校验本地数据: send IDiskMessage AddTorrent ",
-        Local::now().naive_local()
-    );
     // Have our disk manager allocate space for our torrent and start tracking it
+    info!("添加种子并校验本地数据: send IDiskMessage AddTorrent ");
     disk_manager_send.send(IDiskMessage::AddTorrent(metainfo.clone()));
-    println!(
-        "{:?} 添加种子并校验本地数据: complete IDiskMessage AddTorrent",
-        Local::now().naive_local()
-    );
+    info!("添加种子并校验本地数据: complete IDiskMessage AddTorrent");
 
-
-    println!(
-        "{:?} 添加种子并校验本地数据: start 生成块请求队列",
-        Local::now().naive_local()
-    );
     // Generate data structure to track the requests we need to make, the requests that have been fulfilled, and an active peers list
+    info!("添加种子并校验本地数据: start 生成块请求队列");
     let mut piece_requests = generate_requests(metainfo.info(), 16 * 1024);
 
-    println!(
-        "{:?} 添加种子并校验本地数据: start 校验本地文件，过滤块请求队列 ",
-        Local::now().naive_local()
-    );
+    info!("添加种子并校验本地数据: start 校验本地文件，过滤块请求队列");
     let mut cur_pieces = 0;
     //  过滤块请求队列;
     // For any pieces we already have on the file system (and are marked as good), we will be removing them from our requests map
@@ -437,22 +424,17 @@ fn main() {
             // Shouldnt be receiving any other messages...
             // message => panic!("Unexpected Message Received In Selection Receiver: {:?}", message),
             message => {
-                println!(
+                info!(
                     "Unexpected Message Received In Selection Receiver: {:?}",
                     message
                 );
             }
         }
     }
-    println!(
-        "{:?} 添加种子并校验本地数据: end 过滤块请求队列: ",
-        Local::now().naive_local()
-    );
+    info!("添加种子并校验本地数据: end 过滤块请求队列:");
 
     let total_pieces = metainfo.info().pieces().count();
-    println!(
-        "{:?} 添加种子并校验本地数据: Total Pieces: {:?}, Current Pieces: {:?}, Requests Left: {:?}",
-        Local::now().naive_local(),
+    info!("添加种子并校验本地数据: Total Pieces: {:?}, Current Pieces: {:?}, Requests Left: {:?}",
         total_pieces,
         cur_pieces,
         piece_requests.len()
@@ -460,11 +442,11 @@ fn main() {
 
     /////////////////////////////////////////////////////////
 
-    println!("{:?} 下载: 发起握手", Local::now().naive_local());
+    info!("下载: 发起握手");
     // Send the peer given from the command line over to the handshaker to initiate a connection
     handshaker_send.send(InitiateMessage::new(Protocol::BitTorrent, info_hash, peer_addr)).unwrap();
 
-    println!("{:?} 下载: 正在下载 ", Local::now().naive_local());
+    info!("下载: 正在下载 ");
     // Finally, setup our main event loop to drive the tasks we setup earlier
 
     let mut opt_peer :Option<PeerInfo>= None;
@@ -472,7 +454,7 @@ fn main() {
     let mut blocks_pending = 0;
     loop {
         let msg = select_recv.recv().unwrap();
-        info!("[select loop]: {:?}\n", &msg);
+        info!("[select loop]: {:?}", &msg);
         let send_messages = match msg {
             SelectState::BlockProcessed => {
                 // Disk manager let us know a block was processed (one of our requests made it
@@ -580,7 +562,7 @@ fn main() {
         };
     }
 
-    println!("{:?} 下载: 下载完成", Local::now().naive_local());
+    info!("下载: 下载完成");
 }
 
 /// Generate a mapping of piece index to list of block requests for that piece, given a block size.
