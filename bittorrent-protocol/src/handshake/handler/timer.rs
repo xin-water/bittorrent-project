@@ -1,19 +1,28 @@
 use std::time::Duration;
 
+use futures::Future;
+use tokio_timer::{Timeout, TimeoutError, Timer};
+
 #[derive(Clone)]
 pub struct HandshakeTimer {
+    timer: Timer,
     duration: Duration,
 }
 
 impl HandshakeTimer {
-    pub fn new(duration: Duration) -> HandshakeTimer {
+    pub fn new(timer: Timer, duration: Duration) -> HandshakeTimer {
         HandshakeTimer {
+            timer: timer,
             duration: duration,
         }
     }
 
-    pub fn timeout(&self) {
-        std::thread::sleep(self.duration);
+    pub fn timeout<F, E>(&self, future: F) -> Timeout<F>
+    where
+        F: Future<Error = E>,
+        E: From<TimeoutError<F>>,
+    {
+        self.timer.timeout(future, self.duration)
     }
 }
 
@@ -23,14 +32,25 @@ mod tests {
 
     use super::HandshakeTimer;
 
+    use futures::future::{self, Future};
+    use tokio_timer;
+
     #[test]
     fn positive_finish_before_timeout() {
-        let timer = HandshakeTimer::new(Duration::from_millis(50));
+        let timer = HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(50));
+        let result = timer
+            .timeout(future::ok::<&'static str, ()>("Hello"))
+            .wait()
+            .unwrap();
+
+        assert_eq!("Hello", result);
     }
 
     #[test]
     #[should_panic]
     fn negative_finish_after_timeout() {
-        let timer = HandshakeTimer::new(Duration::from_millis(50));
+        let timer = HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(50));
+
+        timer.timeout(future::empty::<(), ()>()).wait().unwrap();
     }
 }

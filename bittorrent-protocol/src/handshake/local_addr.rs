@@ -1,7 +1,7 @@
 use std::io;
 use std::net::SocketAddr;
 
-use std::net::TcpStream;
+use tokio::net::TcpStream;
 
 /// Trait for getting the local address.
 pub trait LocalAddr {

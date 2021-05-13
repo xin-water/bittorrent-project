@@ -1,3 +1,5 @@
+use futures::future::{self, Future};
+use tokio::reactor::Handle;
 
 use crate::handshake::filter::filters::Filters;
 use crate::handshake::handler;
@@ -9,7 +11,7 @@ use crate::handshake::{InitiateMessage, Transport};
 pub fn initiator_handler<T>(
     item: InitiateMessage,
     context: &(T, Filters, HandshakeTimer),
-) -> Result<Option<HandshakeType<T::Socket>>,()>
+) -> Box<dyn Future<Item = Option<HandshakeType<T::Socket>>, Error = ()> + Send>
 where
     T: Transport,
 {
@@ -23,15 +25,18 @@ where
         None,
         filters,
     ) {
-        Ok(None)
-
+        Box::new(future::ok(None))
     } else {
         let res_connect = transport
-            .connect(item.address());
+            .connect(item.address())
+            .map(|connect| timer.timeout(connect));
 
-       res_connect
-           .map(|socket| Some(HandshakeType::Initiate(socket, item)))
-           .or_else(|_| Ok(None))
+        Box::new(
+            future::lazy(|| res_connect)
+                .flatten()
+                .map(|socket| Some(HandshakeType::Initiate(socket, item)))
+                .or_else(|_| Ok(None)),
+        )
     }
 }
 
@@ -71,7 +76,7 @@ mod tests {
             any_info_hash(),
             "1.2.3.4:5".parse().unwrap(),
         );
-        let timer = HandshakeTimer::new(Duration::from_millis(1000));
+        let timer = HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(1000));
 
         let recv_enum_item = super::initiator_handler(
             exp_message.clone(),
@@ -92,7 +97,7 @@ mod tests {
     #[test]
     fn positive_passes_filter() {
         let core = Core::new().unwrap();
-        let timer = HandshakeTimer::new( Duration::from_millis(1000));
+        let timer = HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(1000));
 
         let filters = Filters::new();
         filters.add_filter(BlockAddrFilter::new("2.3.4.5:6".parse().unwrap()));
@@ -122,7 +127,7 @@ mod tests {
     #[test]
     fn positive_needs_data_filter() {
         let core = Core::new().unwrap();
-        let timer = HandshakeTimer::new(Duration::from_millis(1000));
+        let timer = HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(1000));
 
         let filters = Filters::new();
         filters.add_filter(BlockPeerIdFilter::new(any_peer_id()));
@@ -152,7 +157,7 @@ mod tests {
     #[test]
     fn positive_fails_filter() {
         let core = Core::new().unwrap();
-        let timer = HandshakeTimer::new( Duration::from_millis(1000));
+        let timer = HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(1000));
 
         let filters = Filters::new();
         filters.add_filter(BlockProtocolFilter::new(Protocol::Custom(vec![1, 2, 3, 4])));

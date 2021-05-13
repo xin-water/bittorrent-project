@@ -22,8 +22,6 @@ pub mod transports {
 mod transport;
 pub use transport::Transport;
 
-mod stream;
-pub use stream::Stream;
 
 mod local_addr;
 pub use local_addr::LocalAddr;

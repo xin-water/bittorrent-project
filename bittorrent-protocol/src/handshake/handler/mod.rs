@@ -1,9 +1,13 @@
 use std::net::SocketAddr;
-use crossbeam::channel::{Sender};
+
+use futures::future::{self, Future, IntoFuture, Loop};
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio::runtime::current_thread::Handle;
+
 use crate::handshake::filter::filters::Filters;
 use crate::handshake::{Extensions, FilterDecision, InitiateMessage, Protocol};
 use crate::util::bt::{InfoHash, PeerId};
-use crate::handshake::stream::Stream;
 
 pub mod handshaker;
 pub mod initiator;
@@ -15,53 +19,64 @@ pub enum HandshakeType<S> {
     Complete(S, SocketAddr),
 }
 
-enum LoopError {
+enum LoopError<D> {
     Terminate,
-    Recoverable,
+    Recoverable(D),
 }
 
 /// Create loop for feeding the handler with the items coming from the stream, and forwarding the result to the sink.
 ///
 /// If the stream is used up, or an error is propogated from any of the elements, the loop will terminate.
-pub fn loop_handler<M, C, H, R>(mut stream:M, context: C, mut handler: H, sink: Sender<R>)
+pub fn loop_handler<M, C, H, F, R, K>(stream: M, context: C, handler: H, sink: K,handle: Handle )
 where
     M: Stream + 'static + Send,
+    M::Item: 'static + Send,
     C: 'static + Send,
-    H: FnMut(M::Item, &C) -> Result<Option<R>,()> + 'static + Send ,
-    R: 'static + Send ,
+    H: FnMut(M::Item, &C) -> F + 'static + Send,
+    F: Future<Item = Option<R>> + 'static + Send,
+    R: 'static + Send,
+    K: Sink<SinkItem = R> + 'static + Send,
 {
-    std::thread::spawn(move||{
-        loop {
+    handle.spawn(future::loop_fn(
+        (stream, handler, sink, context),
+        |(stream, mut handler, sink, context)| {
             // We will terminate the loop if, the stream gives us an error, the stream gives us None, the handler gives
             // us an error, or the sink gives us an error. If the handler gives us Ok(None), we will map that to a
             // recoverable error (since our Ok(Some) result would have to continue with its own future, we hijack
             // the error to store an immediate value). We finally map any recoverable errors back to an Ok value
             // so we can continue with the loop in that case.
-            let reruslt = stream
-                .poll()
+            stream
+                .into_future()
                 .map_err(|_| LoopError::Terminate)
-                .and_then(|item| {
-                    let result = handler(item, &context);
-                    result
-                        .map_err(|_| LoopError::Terminate)
-                        .and_then(move |opt_result|
-                            match opt_result {
-                                Some(result) => Ok(result),
-                                None => Err(LoopError::Recoverable),
-                            })
+                .and_then(|(opt_item, stream)| {
+                    opt_item
+                        .ok_or(LoopError::Terminate)
+                        .map(|item| (item, stream))
                 })
-                .and_then(|result| {
+                .and_then(move |(item, stream)| {
+                    let into_future = handler(item, &context);
+
+                    into_future
+                        .into_future()
+                        .map_err(|_| LoopError::Terminate)
+                        .and_then(move |opt_result| match opt_result {
+                            Some(result) => Ok((result, stream, handler, context, sink)),
+                            None => Err(LoopError::Recoverable((stream, handler, context, sink))),
+                        })
+                })
+                .and_then(|(result, stream, handler, context, sink)| {
                     sink.send(result)
                         .map_err(|_| LoopError::Terminate)
-                });
-
-            match reruslt {
-                Err(LoopError::Terminate) => break,
-                Err(LoopError::Recoverable) => {}
-                _ => {}
-            }
-        }
-    });
+                        .map(|sink| Loop::Continue((stream, handler, sink, context)))
+                })
+                .or_else(|loop_error| match loop_error {
+                    LoopError::Terminate => Err(()),
+                    LoopError::Recoverable((stream, handler, context, sink)) => {
+                        Ok(Loop::Continue((stream, handler, sink, context)))
+                    }
+                })
+        },
+    ));
 }
 
 /// Computes whether or not we should filter given the parameters and filters.
