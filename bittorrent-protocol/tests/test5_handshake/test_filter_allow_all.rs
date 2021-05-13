@@ -2,6 +2,12 @@ use std::any::Any;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::Future;
+use tokio::runtime::Runtime;
+use tokio::timer::Timeout;
+
 use bittorrent_protocol::handshake::transports::TcpTransport;
 use bittorrent_protocol::handshake::{
     DiscoveryInfo, Extensions, FilterDecision, HandshakeFilter, HandshakeFilters,
@@ -39,6 +45,7 @@ impl HandshakeFilter for FilterAllowAll {
 
 #[test]
 fn test_filter_all() {
+    let mut runtime = Runtime::new().unwrap();
 
     let mut handshaker_one_addr = "127.0.0.1:0".parse().unwrap();
     let handshaker_one_pid = [4u8; bt::PEER_ID_LEN].into();
@@ -61,12 +68,42 @@ fn test_filter_all() {
         .unwrap();
     handshaker_two_addr.set_port(handshaker_two.port());
 
-    let (_, mut stream_one) = handshaker_one.into_parts();
-    let (mut sink_two, mut stream_two) = handshaker_two.into_parts();
+    let (_, stream_one) = handshaker_one.into_parts();
+    let (sink_two, stream_two) = handshaker_two.into_parts();
 
-    sink_two.send(InitiateMessage::new(Protocol::BitTorrent, [55u8; bt::INFO_HASH_LEN].into(), handshaker_one_addr));
+    let timeout_result = runtime
+        .block_on(
+            sink_two
+                .send(InitiateMessage::new(
+                    Protocol::BitTorrent,
+                    [55u8; bt::INFO_HASH_LEN].into(),
+                    handshaker_one_addr,
+                ))
+                .map_err(|_| ())
+                .and_then(|_| {
+                    let timeout = Timeout::new(Duration::from_millis(50), Default::default())
+                        .map(|_| TimeoutResult::TimedOut)
+                        .map_err(|_| ());
 
-    let result_one = stream_one.poll().unwrap();
+                    let result_one = stream_one
+                        .into_future()
+                        .map(|_| TimeoutResult::GotResult)
+                        .map_err(|_| ());
+                    let result_two = stream_two
+                        .into_future()
+                        .map(|_| TimeoutResult::GotResult)
+                        .map_err(|_| ());
 
-    let result_two = stream_two.poll().unwrap();
+                    result_one
+                        .select(result_two)
+                        .map(|_| TimeoutResult::GotResult)
+                        .map_err(|_| ())
+                        .select(timeout)
+                        .map(|(item, _)| item)
+                        .map_err(|_| ())
+                }),
+        )
+        .unwrap();
+
+    assert_eq!(TimeoutResult::GotResult, timeout_result);
 }
