@@ -147,26 +147,26 @@ fn main() {
 
              let opt_message = match opt_item {
                  OPeerManagerMessage::PeerAdded(info) => {
-                     println!("[merged_recv] PeerAdded -- Connected To Peer: {:?}\n", info);
+                     info!("[merged_recv] PeerAdded -- Connected To Peer: {:?}\n", info);
                      Some(IUberMessage::Control(ControlMessage::PeerConnected(info)))
                  }
 
                  OPeerManagerMessage::PeerRemoved(info) => {
-                     println!("[merged_recv] PeerRemoved {:?} \n", info);
+                     info!("[merged_recv] PeerRemoved {:?} \n", info);
                      Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
                          info,
                      )))
                  }
 
                  OPeerManagerMessage::PeerDisconnect(info) => {
-                     println!("[merged_recv] PeerDisconnect {:?} \n", info);
+                     info!("[merged_recv] PeerDisconnect {:?} \n", info);
                      Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
                          info,
                      )))
                  }
 
                  OPeerManagerMessage::PeerError(info, error) => {
-                     println!("[merged_recv] PeerError {:?} \n--msg: {:?}\n", info, error);
+                     info!("[merged_recv] PeerError {:?} \n--msg: {:?}\n", info, error);
                      Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
                          info,
                      )))
@@ -176,7 +176,7 @@ fn main() {
                                info,
                                PeerWireProtocolMessage::BitsExtension(
                                    BitsExtensionMessage::Extended(extended))) => {
-                     println!("[merged_recv] BitsExtension : {:?}\n", &extended);
+                     info!("[merged_recv] BitsExtension : {:?}\n", &extended);
                      Some(IUberMessage::Extended(
                          IExtendedMessage::RecievedExtendedMessage(info, extended),
                      ))
@@ -186,7 +186,7 @@ fn main() {
                                info,
                                PeerWireProtocolMessage::ProtExtension(
                                    PeerExtensionProtocolMessage::UtMetadata(message))) => {
-                     println!("[merged_recv] UtMetadata : {:?}\n", &message.message_size());
+                     info!("[merged_recv] UtMetadata : {:?}\n", &message.message_size());
                      Some(IUberMessage::Discovery(
                          IDiscoveryMessage::ReceivedUtMetadataMessage(info, message),
                      ))
@@ -247,9 +247,9 @@ fn main() {
         let opt_message = message.and_then(|message|
             match message {
                 OUberMessage::Extended(OExtendedMessage::SendExtendedMessage(info, ext_message)) => {
-                    println!(
-                        "[select_recv] SendExtendedMessage --peer_info: {:?}\n--msg: {:?}\n",
-                        info, ext_message
+                    info!(
+                        "[select_recv] SendExtendedMessage:\n--peer_info: {:?}\n--msg: {:?}\n",
+                        info.addr(), ext_message
                     );
 
                     Some(IPeerManagerMessage::SendMessage(
@@ -262,9 +262,9 @@ fn main() {
                 }
 
                 OUberMessage::Discovery(ODiscoveryMessage::SendUtMetadataMessage(info, message)) => {
-                    println!(
-                        "[select_recv] SendUtMetadataMessage --peer_info: {:?} \n--msg: {:?}\n",
-                        info, message
+                    info!(
+                        "[select_recv] SendUtMetadataMessage \n--peer_info: {:?} \n--msg: {:?}\n",
+                        info.addr(), message
                     );
                     Some(IPeerManagerMessage::SendMessage(
                         info,
@@ -275,7 +275,7 @@ fn main() {
                     ))
                 }
                 OUberMessage::Discovery(ODiscoveryMessage::DownloadedMetainfo(metainfo)) => {
-                    println!("[select_recv]  DownloadedMetainfo\n");
+                    info!("[select_recv]  DownloadedMetainfo\n");
                     opt_metainfo = Some(metainfo);
                     None
                 }
@@ -295,7 +295,7 @@ fn main() {
                     .unwrap()
                     .write_all(&metainfo.to_bytes())
                     .unwrap();
-                println!("种子文件下载完成！\npath:{:?}", output);
+                info!("种子文件下载完成！\npath:{:?}", output);
                 break
             }
         }
