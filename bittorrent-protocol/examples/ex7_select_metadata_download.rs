@@ -14,8 +14,11 @@ use std::fs::File;
 use std::io::Write;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
-use std::sync::mpsc::{Sender, Receiver};
-use std::sync::{mpsc, Arc, Mutex};
+use futures::future::{self, Either, Loop};
+use futures::sink::Wait;
+use futures::{Future, Sink, Stream};
+use tokio::runtime::current_thread::{Runtime, Handle};
+use tokio::io::AsyncRead;
 
 use bittorrent_protocol::util::bt::{InfoHash, PeerId};
 
@@ -81,6 +84,10 @@ fn main() {
     let peer_id:PeerId = (*b"-UT2060-000000000000").into();
     let addr = "127.0.0.1:44444";
 
+    // Create our main "core" event loop
+    let mut runtime = Runtime::new().unwrap();
+    let handle= runtime.handle();
+
     // Activate the extension protocol via the handshake bits
     let mut extensions = Extensions::new();
     extensions.add(Extension::ExtensionProtocol);
@@ -94,205 +101,255 @@ fn main() {
             // Set a low handshake timeout so we dont wait on peers that arent listening on tcp
             HandshakerConfig::default().with_connect_timeout(Duration::from_millis(500)),
         )
-        .build(TcpTransport)
+        .build(TcpTransport,handle.clone())
         .unwrap()
         .into_parts();
 
     // Create a peer manager that will hold our peers and heartbeat/send messages to them
     let (mut peer_manager_send, mut peer_manager_recv) =
-        PeerManagerBuilder::new().build().into_parts();
+        PeerManagerBuilder::new().build(handle).into_parts();
 
+    let timer = TimerBuilder::default().build(HashedWheelBuilder::default().build());
+    let timer_recv = timer
+        .sleep_stream(Duration::from_millis(100))
+        .unwrap()
+        .map(Either::B);
+    let merged_recv = peer_manager_recv
+        .map(Either::A)
+        .map_err(|_| ())
+        .select(timer_recv);
 
     // Create our UtMetadata selection module
-    let mut uber_module = Arc::new(Mutex::new(UberModuleBuilder::new()
+    let (mut uber_send, mut uber_recv) = UberModuleBuilder::new()
                                        .with_extended_builder(Some(ExtendedMessageBuilder::new()))
                                        .with_discovery_module(UtMetadataModule::new())
-                                       .build()));
+                                       .build()
+                                       .split();
 
     info!("commit DownloadMetainfo to uber_module....");
     // Tell the uber module we want to download metainfo for the given hash
-    uber_module.lock().unwrap()
-        .send(IUberMessage::Discovery(IDiscoveryMessage::DownloadMetainfo(info_hash)))
-        .expect("uber_module send msg: DownloadMetainfo fail");
+    let uber_send = runtime.block_on(
+        uber_send
+            .send(IUberMessage::Discovery(
+                IDiscoveryMessage::DownloadMetainfo(info_hash),
+            ))
+            .map_err(|_| ()),
+    ).unwrap();
+
+    ///////////////////////////////////////////////////////////////////////////////////
 
     // Hook up a future that feeds incoming (handshaken) peers over to the peer manager
-    let mut handshark_peer_manager_send = peer_manager_send.clone();
-    std::thread::spawn(move ||{
+    runtime.spawn(
+        handshaker_recv
+            .map_err(|_| ())
+            .map(|complete_msg| {
+                // Our handshaker finished handshaking some peer, get
+                // the peer info as well as the peer itself (socket)
 
-        let (_, extensions, hash, pid, addr, sock) = handshaker_recv.poll().unwrap().into_parts();
+                let (_, extensions, hash, pid, addr, sock) = complete_msg.into_parts();
 
-        // Only connect to peer that support the extension protocol...
-        if extensions.contains(Extension::ExtensionProtocol) {
+                // Only connect to peer that support the extension protocol...
+                if extensions.contains(Extension::ExtensionProtocol) {
 
-            // Create our peer identifier used by our peer manager
-            let peer_info = PeerInfo::new(addr, pid, hash, extensions);
+                      // Create our peer identifier used by our peer manager
+                      let peer_info = PeerInfo::new(addr, pid, hash, extensions);
 
-            info!("AddPeer:\n {:?} \n ......................to peer_manmager_module....",&peer_info);
+                      // Map to a message that can be fed to our peer manager
+                      IPeerManagerMessage::AddPeer(peer_info, sock)
+                } else {
+                      panic!("Chosen Peer Does Not Support Extended Messages")
+                }
+            })
+            .forward(peer_manager_send.clone().sink_map_err(|_| ()))
+            .map(|_| ()),
+    );
 
-            // Map to a message that can be fed to our peer manager
-            handshark_peer_manager_send.send( IPeerManagerMessage::AddPeer(peer_info, sock));
-
-        } else {
-            panic!("Chosen Peer Does Not Support Extended Messages")
-        }
-
-    });
-
-    info!("start  peer_manager_recv loop ....");
     // Hook up a future that receives messages from the peer manager
-    let mut uber_module_clone = uber_module.clone();
-     std::thread::spawn(move ||{
-         loop {
-             let opt_item=peer_manager_recv.poll().unwrap();
-             info!("[merged_recv] opeer_manager_msg {:?} \n", &opt_item);
+    runtime.spawn(future::loop_fn(
+        (merged_recv, info_hash, uber_send.sink_map_err(|_| ())),
+        |(merged_recv, info_hash, select_send)| {
+            merged_recv
+                .into_future()
+                .map_err(|_| ())
+                .and_then(move |(opt_item, merged_recv)| {
+                    let opt_message = match opt_item.unwrap() {
+                        Either::A(OPeerManagerMessage::PeerAdded(info)) => {
+                            info!("[peer_manage_steam_recv] PeerAdded -- Connected To Peer: {:?}\n", info);
+                            Some(IUberMessage::Control(ControlMessage::PeerConnected(info)))
+                        }
 
-             let opt_message = match opt_item {
-                 OPeerManagerMessage::PeerAdded(info) => {
-                     Some(IUberMessage::Control(ControlMessage::PeerConnected(info)))
-                 }
+                        Either::A(OPeerManagerMessage::PeerRemoved(info)) => {
+                            info!("[peer_manage_steam_recv] PeerRemoved {:?} \n", info);
+                            Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
+                                info,
+                            )))
+                        }
 
-                 OPeerManagerMessage::PeerRemoved(info) => {
-                     Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
-                         info,
-                     )))
-                 }
+                        Either::A(OPeerManagerMessage::PeerDisconnect(info)) => {
+                            info!("[peer_manage_steam_recv] PeerDisconnect {:?} \n", info);
+                            Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
+                                info,
+                            )))
+                        }
 
-                 OPeerManagerMessage::PeerDisconnect(info) => {
-                     Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
-                         info,
-                     )))
-                 }
+                        Either::A(OPeerManagerMessage::PeerError(info, error)) => {
+                            info!("[peer_manage_steam_recv] PeerError {:?} \n--msg: {:?}\n", info, error);
+                            Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
+                                info,
+                            )))
+                        }
 
-                 OPeerManagerMessage::PeerError(info, error) => {
-                     Some(IUberMessage::Control(ControlMessage::PeerDisconnected(
-                         info,
-                     )))
-                 }
+                        Either::A(OPeerManagerMessage::ReceivedMessage(
+                                      info,
+                                      PeerWireProtocolMessage::BitField(bytes))) => {
+                            info!("[peer_manage_steam_recv] BitField : {:?}\n", bytes);
+                            None
+                        }
 
-                 OPeerManagerMessage::ReceivedMessage(
-                               info,
-                               PeerWireProtocolMessage::BitsExtension(
-                                   BitsExtensionMessage::Extended(extended))) => {
-                     Some(IUberMessage::Extended(
-                         IExtendedMessage::RecievedExtendedMessage(info, extended),
-                     ))
-                 }
+                        Either::A(OPeerManagerMessage::ReceivedMessage(
+                                      info,
+                                      PeerWireProtocolMessage::BitsExtension(BitsExtensionMessage::Extended(
+                                                                                 extended,
+                                                                             )),
+                                  )) => {
+                            info!("[peer_manage_steam_recv] BitsExtension : \n msg:{:?}\n msg_size:{:?}", &extended,extended.bencode_size());
+                            Some(IUberMessage::Extended(
+                                IExtendedMessage::RecievedExtendedMessage(info, extended),
+                            ))
+                        }
 
-                 OPeerManagerMessage::ReceivedMessage(
-                               info,
-                               PeerWireProtocolMessage::ProtExtension(
-                                   PeerExtensionProtocolMessage::UtMetadata(message))) => {
-                     Some(IUberMessage::Discovery(
-                         IDiscoveryMessage::ReceivedUtMetadataMessage(info, message),
-                     ))
-                 }
+                        Either::A(OPeerManagerMessage::ReceivedMessage(
+                                      info,
+                                      PeerWireProtocolMessage::ProtExtension(
+                                          PeerExtensionProtocolMessage::UtMetadata(message),
+                                      ),
+                                  )) => {
+                            info!("[peer_manage_steam_recv] UtMetadata : {:?}\n", &message.message_size());
+                            Some(IUberMessage::Discovery(
+                                IDiscoveryMessage::ReceivedUtMetadataMessage(info, message),
+                            ))
+                        }
 
-                 _ => None,
-             };
+                        Either::B(_) => Some(IUberMessage::Control(ControlMessage::Tick(
+                            Duration::from_millis(100),
+                        ))),
+                        _ => None,
+                    };
 
-             match opt_message {
-                 Some(message) => {
-                     uber_module_clone.lock().unwrap().send(message).unwrap();
-                 }
-                 None =>{}
-             }
-         }
-     });
+                    match opt_message {
+                        Some(message) => {
+                            Either::A(select_send.send(message).map(move |select_send| {
+                                Loop::Continue((merged_recv, info_hash, select_send))
+                            }))
+                        }
+                        None => Either::B(future::ok(Loop::Continue((
+                            merged_recv,
+                            info_hash,
+                            select_send,
+                        )))),
+                    }
+                })
+        },
+    ));
 
-    let mut uber_module_clone = uber_module.clone();
-    std::thread::spawn(move ||{
-        loop {
+    /////////////////////////////////////////////////////////////////////////////////
 
-            std::thread::sleep(Duration::from_millis(100));
-
-            let message = IUberMessage::Control(ControlMessage::Tick(
-                 Duration::from_millis(100),
-             ));
-
-            uber_module_clone.lock().unwrap().send(message).unwrap();
-        }
-    });
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    info!("commit DownloadMetainfo to uber_module....");
-    // Tell the uber module we want to download metainfo for the given hash
-    uber_module.lock().unwrap()
-        .send(IUberMessage::Discovery(IDiscoveryMessage::DownloadMetainfo(info_hash)))
-        .expect("uber_module send msg: DownloadMetainfo fail");
-
-    info!("start  handshaker_send ....");
-    handshaker_send.send(
-        InitiateMessage::new(
-            Protocol::BitTorrent,
-            info_hash,
-            addr.parse().unwrap()
-        )
+    // Send the peer given from the command line over to the handshaker to initiate a connection
+    runtime.block_on(
+        handshaker_send
+            .send(InitiateMessage::new(
+                Protocol::BitTorrent,
+                info_hash,
+                addr.parse().unwrap(),
+            ))
+            .map_err(|_| ()),
     ).unwrap();
 
 
-    let mut opt_metainfo :Option<Metainfo>= None;
-    loop {
+    let metainfo = runtime.block_on(
+        future::loop_fn(
+            (uber_recv, peer_manager_send.sink_map_err(|_| ()), None),
+            |(select_recv, map_peer_manager_send, mut opt_metainfo)| {
+                select_recv.into_future().map_err(|_| ()).and_then(
+                    move |(opt_message, select_recv)| {
+                        let opt_message = opt_message.and_then(|message| match message {
+                            OUberMessage::Extended(OExtendedMessage::SendExtendedMessage(
+                                                       info,
+                                                       ext_message,
+                                                   )) => {
+                                info!(
+                                    "[select_recv] OExtendedMessage::SendExtendedMessage: \n\
+                                    --info:{:?} \n\
+                                    --msg: {:?} \n",
+                                    info,
+                                    ext_message
+                                );
+                                Some(IPeerManagerMessage::SendMessage(
+                                    info,
+                                    0,
+                                    PeerWireProtocolMessage::BitsExtension(
+                                        BitsExtensionMessage::Extended(ext_message),
+                                    ),
+                                ))
+                            }
+                            OUberMessage::Discovery(ODiscoveryMessage::SendUtMetadataMessage(
+                                                        info,
+                                                        message,
+                                                    )) => {
+                                info!(
+                                    "[select_recv] ODiscoveryMessage::SendUtMetadataMessage \n\
+                                    --info: {:?} \n\
+                                    --msg: {:?}  \n",
+                                    info,
+                                    message
+                                );
+                                Some(IPeerManagerMessage::SendMessage(
+                                    info,
+                                    0,
+                                    PeerWireProtocolMessage::ProtExtension(
+                                        PeerExtensionProtocolMessage::UtMetadata(message),
+                                    ),
+                                ))
+                            }
+                            OUberMessage::Discovery(ODiscoveryMessage::DownloadedMetainfo(
+                                                        metainfo,
+                                                    )) => {
+                                info!("[select_recv]  ODiscoveryMessage::DownloadedMetainfo\n");
+                                opt_metainfo = Some(metainfo);
+                                None
+                            }
+                            _ => panic!("[select_recv] Unexpected Message For Uber Module..."),
+                        });
 
-        // 使用大括号限定作用域, 释放锁.
-        let message = {
-            uber_module.lock().unwrap().poll().unwrap()
-        };
+                        match (opt_message, opt_metainfo.take()) {
+                            (Some(message), _) => {
+                                Either::A(map_peer_manager_send.send(message).map(
+                                    move |peer_manager_send| {
+                                        Loop::Continue((
+                                            select_recv,
+                                            peer_manager_send,
+                                            opt_metainfo,
+                                        ))
+                                    },
+                                ))
+                            }
+                            (None, None) => Either::B(future::ok(Loop::Continue((
+                                select_recv,
+                                map_peer_manager_send,
+                                opt_metainfo,
+                            )))),
+                            (None, Some(metainfo)) => Either::B(future::ok(Loop::Break(metainfo))),
+                        }
+                    },
+                )
+            },
+        ))
+        .unwrap();
 
-        let opt_message = message.and_then(|message|
-            match message {
-                OUberMessage::Extended(OExtendedMessage::SendExtendedMessage(info, ext_message)) => {
-                    info!(
-                        "[select_recv] SendExtendedMessage:\n--peer_info: {:?}\n--msg: {:?}\n",
-                        info.addr(), ext_message
-                    );
-
-                    Some(IPeerManagerMessage::SendMessage(
-                        info,
-                        0,
-                        PeerWireProtocolMessage::BitsExtension(
-                            BitsExtensionMessage::Extended(ext_message),
-                        ),
-                    ))
-                }
-
-                OUberMessage::Discovery(ODiscoveryMessage::SendUtMetadataMessage(info, message)) => {
-                    info!(
-                        "[select_recv] SendUtMetadataMessage \n--peer_info: {:?} \n--msg: {:?}\n",
-                        info.addr(), message
-                    );
-                    Some(IPeerManagerMessage::SendMessage(
-                        info,
-                        0,
-                        PeerWireProtocolMessage::ProtExtension(
-                            PeerExtensionProtocolMessage::UtMetadata(message),
-                        ),
-                    ))
-                }
-                OUberMessage::Discovery(ODiscoveryMessage::DownloadedMetainfo(metainfo)) => {
-                    info!("[select_recv]  DownloadedMetainfo\n");
-                    opt_metainfo = Some(metainfo);
-                    None
-                }
-                _ => panic!("[select_recv] Unexpected Message For Uber Module..."),
-        });
-
-        match (opt_message, opt_metainfo.take()) {
-            (Some(message), _) => {
-                peer_manager_send.send(message);
-            }
-            (None, None) => {
-
-            }
-            (None, Some(metainfo)) =>{
-                // Write the metainfo file out to the user provided path
-                File::create(output)
-                    .unwrap()
-                    .write_all(&metainfo.to_bytes())
-                    .unwrap();
-                info!("种子文件下载完成！\npath:{:?}", output);
-                break
-            }
-        }
-    }
+    // Write the metainfo file out to the user provided path
+    File::create(output)
+        .unwrap()
+        .write_all(&metainfo.to_bytes())
+        .unwrap();
+    info!("种子文件下载完成！\npath:{:?}", output);
 }
