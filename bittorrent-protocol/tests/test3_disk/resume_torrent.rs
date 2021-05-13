@@ -1,6 +1,11 @@
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
+use bytes::BytesMut;
+use futures::future::Loop;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio::runtime::Runtime;
 
 #[test]
 fn positive_complete_torrent() {
@@ -24,22 +29,27 @@ fn positive_complete_torrent() {
     let filesystem = InMemoryFileSystem::new();
     let disk_manager = DiskManagerBuilder::new().build(filesystem.clone());
 
-    let (mut blocking_send, mut recv) = disk_manager.into_parts();
-
+    let (send, recv) = disk_manager.split();
+    let mut blocking_send = send.wait();
     blocking_send
         .send(IDiskMessage::AddTorrent(metainfo_file.clone()))
         .unwrap();
 
+    // Verify that zero pieces are marked as good
+    let mut runtime = Runtime::new().unwrap();
+
     // Run a core loop until we get the TorrentAdded message
-    let mut good_pieces = 0;
-    loop {
-        let msg = recv.next().unwrap();
-        match msg {
-            ODiskMessage::TorrentAdded(_) => break,
-            ODiskMessage::FoundGoodPiece(_, _) => good_pieces += 1,
+    let (good_pieces, recv) = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        (0, recv),
+        |good_pieces, recv, msg| match msg {
+            ODiskMessage::TorrentAdded(_) => Loop::Break((good_pieces, recv)),
+            ODiskMessage::FoundGoodPiece(_, _) => Loop::Continue((good_pieces + 1, recv)),
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        },
+    );
+
     // Make sure we have no good pieces
     assert_eq!(0, good_pieces);
 
@@ -50,7 +60,7 @@ fn positive_complete_torrent() {
 
     // Send piece 0
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[0..500],
         metainfo_file.info().info_hash(),
         0,
@@ -59,7 +69,7 @@ fn positive_complete_torrent() {
         |_| (),
     );
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[500..1000],
         metainfo_file.info().info_hash(),
         0,
@@ -68,7 +78,7 @@ fn positive_complete_torrent() {
         |_| (),
     );
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[1000..1024],
         metainfo_file.info().info_hash(),
         0,
@@ -78,31 +88,35 @@ fn positive_complete_torrent() {
     );
 
     // Verify that piece 0 is good
-    let mut piece_zero_good = false;
-    let mut messages_recvd = 0;
+    let (recv, piece_zero_good) = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        ((false, 0), recv),
+        |(piece_zero_good, messages_recvd), recv, msg| {
+            let messages_recvd = messages_recvd + 1;
 
-    loop {
-        let msg = recv.next().unwrap();
-        let messages_recvd = messages_recvd + 1;
+            // Map BlockProcessed to a None piece index so we don't update our state
+            let (opt_piece_index, new_value) = match msg {
+                ODiskMessage::FoundGoodPiece(_, index) => (Some(index), true),
+                ODiskMessage::FoundBadPiece(_, index) => (Some(index), false),
+                ODiskMessage::BlockProcessed(_) => (None, false),
+                unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
+            };
 
-        // Map BlockProcessed to a None piece index so we don't update our state
-        let (opt_piece_index, new_value) = match msg {
-            ODiskMessage::FoundGoodPiece(_, index) => (Some(index), true),
-            ODiskMessage::FoundBadPiece(_, index) => (Some(index), false),
-            ODiskMessage::BlockProcessed(_) => (None, false),
-            unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
+            let piece_zero_good = match opt_piece_index {
+                None => piece_zero_good,
+                Some(0) => new_value,
+                Some(x) => panic!("Unexpected Index {:?}", x),
+            };
 
-        match opt_piece_index {
-            None => piece_zero_good = false,
-            Some(0) => piece_zero_good = new_value,
-            Some(x) => panic!("Unexpected Index {:?}", x),
-        };
+            if messages_recvd == (3 + 1) {
+                Loop::Break((recv, piece_zero_good))
+            } else {
+                Loop::Continue(((piece_zero_good, messages_recvd), recv))
+            }
+        },
+    );
 
-        if messages_recvd == (3 + 1) {
-            break;
-        }
-    }
     // Assert whether or not pieces were good
     assert_eq!(true, piece_zero_good);
 
@@ -112,36 +126,37 @@ fn positive_complete_torrent() {
         .unwrap();
 
     // Verify that our torrent was removed
-    loop {
-        let msg = recv.next().unwrap();
-        match msg {
-            ODiskMessage::TorrentRemoved(_) => break,
+    let recv =
+        super::core_loop_with_timeout(
+            &mut runtime,
+            500,
+            ((), recv),
+            |_, recv, msg| match msg {
+            ODiskMessage::TorrentRemoved(_) => Loop::Break(recv),
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        });
 
     // Re-add our torrent and verify that we see our good first block
     blocking_send
         .send(IDiskMessage::AddTorrent(metainfo_file.clone()))
         .unwrap();
 
-    let mut piece_zero_good = false;
-    loop {
-        let msg = recv.next().unwrap();
-        match msg {
-            ODiskMessage::TorrentAdded(_) => break,
-            ODiskMessage::FoundGoodPiece(_, piece) if piece == 0 => {
-                piece_zero_good = true;
-            }
+    let (recv, piece_zero_good) = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        (false, recv),
+        |piece_zero_good, recv, msg| match msg {
+            ODiskMessage::TorrentAdded(_) => Loop::Break((recv, piece_zero_good)),
+            ODiskMessage::FoundGoodPiece(_, piece) if piece == 0 => Loop::Continue((true, recv)),
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        },
+    );
 
     assert_eq!(true, piece_zero_good);
 
     // Send piece 1
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[(1024 + 0)..(1024 + 500)],
         metainfo_file.info().info_hash(),
         1,
@@ -150,7 +165,7 @@ fn positive_complete_torrent() {
         |_| (),
     );
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[(1024 + 500)..(1024 + 1000)],
         metainfo_file.info().info_hash(),
         1,
@@ -159,7 +174,7 @@ fn positive_complete_torrent() {
         |_| (),
     );
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[(1024 + 1000)..(1024 + 1024)],
         metainfo_file.info().info_hash(),
         1,
@@ -170,7 +185,7 @@ fn positive_complete_torrent() {
 
     // Send piece 2
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[(2048 + 0)..(2048 + 500)],
         metainfo_file.info().info_hash(),
         2,
@@ -179,7 +194,7 @@ fn positive_complete_torrent() {
         |_| (),
     );
     super::send_block(
-        blocking_send.clone(),
+        &mut blocking_send,
         &files_bytes[(2048 + 500)..(2048 + 975)],
         metainfo_file.info().info_hash(),
         2,
@@ -189,31 +204,36 @@ fn positive_complete_torrent() {
     );
 
     // Verify last two blocks are good
-    let mut piece_one_good = false;
-    let mut piece_two_good = false;
+    let (piece_one_good, piece_two_good) = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        ((false, false, 0), recv),
+        |(piece_one_good, piece_two_good, messages_recvd), recv, msg| {
+            let messages_recvd = messages_recvd + 1;
 
-    loop {
-        let msg = recv.next().unwrap();
-        let messages_recvd = messages_recvd + 1;
-        // Map BlockProcessed to a None piece index so we don't update our state
-        let (opt_piece_index, new_value) = match msg {
-            ODiskMessage::FoundGoodPiece(_, index) => (Some(index), true),
-            ODiskMessage::FoundBadPiece(_, index) => (Some(index), false),
-            ODiskMessage::BlockProcessed(_) => (None, false),
-            unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
+            // Map BlockProcessed to a None piece index so we don't update our state
+            let (opt_piece_index, new_value) = match msg {
+                ODiskMessage::FoundGoodPiece(_, index) => (Some(index), true),
+                ODiskMessage::FoundBadPiece(_, index) => (Some(index), false),
+                ODiskMessage::BlockProcessed(_) => (None, false),
+                unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
+            };
 
-        match opt_piece_index {
-            None => {}
-            Some(1) => piece_one_good = new_value,
-            Some(2) => piece_two_good = new_value,
-            Some(x) => panic!("Unexpected Index {:?}", x),
-        };
+            let (piece_one_good, piece_two_good) = match opt_piece_index {
+                None => (piece_one_good, piece_two_good),
+                Some(1) => (new_value, piece_two_good),
+                Some(2) => (piece_one_good, new_value),
+                Some(x) => panic!("Unexpected Index {:?}", x),
+            };
 
-        if messages_recvd == (5 + 2) {
-            break;
-        }
-    }
+            if messages_recvd == (5 + 2) {
+                Loop::Break((piece_one_good, piece_two_good))
+            } else {
+                Loop::Continue(((piece_one_good, piece_two_good, messages_recvd), recv))
+            }
+        },
+    );
+
     assert_eq!(true, piece_one_good);
     assert_eq!(true, piece_two_good);
 }

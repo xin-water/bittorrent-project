@@ -1,6 +1,10 @@
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage};
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
+use futures::future::{Future, Loop};
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio::runtime::Runtime;
 
 #[test]
 fn positive_add_torrent() {
@@ -24,21 +28,25 @@ fn positive_add_torrent() {
     let filesystem = InMemoryFileSystem::new();
     let disk_manager = DiskManagerBuilder::new().build(filesystem.clone());
 
-    let (mut send, mut recv) = disk_manager.into_parts();
-    send.send(IDiskMessage::AddTorrent(metainfo_file)).unwrap();
+    let (send, recv) = disk_manager.split();
+    send.send(IDiskMessage::AddTorrent(metainfo_file))
+        .wait()
+        .unwrap();
 
-    let good_pieces = 0;
+    // Verify that zero pieces are marked as good
+    let mut runtime = Runtime::new().unwrap();
 
     // Run a core loop until we get the TorrentAdded message
-    loop {
-        let msg = recv.next().unwrap();
-
-        match msg {
-            ODiskMessage::TorrentAdded(_) => break,
-            ODiskMessage::FoundGoodPiece(_, _) => good_pieces + 1,
+    let good_pieces = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        (0, recv),
+        |good_pieces, recv, msg| match msg {
+            ODiskMessage::TorrentAdded(_) => Loop::Break(good_pieces),
+            ODiskMessage::FoundGoodPiece(_, _) => Loop::Continue((good_pieces + 1, recv)),
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        },
+    );
 
     assert_eq!(0, good_pieces);
 

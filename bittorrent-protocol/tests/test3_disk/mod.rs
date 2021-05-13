@@ -3,16 +3,18 @@ use std::collections::HashMap;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use bytes::BytesMut;
-use rand::Rng;
-
-use bittorrent_protocol::disk::{
-    BlockMetadata, BlockMut, DiskManagerSink, DiskManagerStream, FileSystem, IDiskMessage,
-    ODiskMessage,
-};
+use bittorrent_protocol::disk::{BlockMetadata, BlockMut, FileSystem, IDiskMessage};
 use bittorrent_protocol::metainfo::{Accessor, IntoAccessor, PieceAccess};
 use bittorrent_protocol::util::bt::InfoHash;
+use bytes::BytesMut;
+use futures::future::{self, Future, Loop};
+use futures::sink::{Sink, Wait};
+use futures::stream::Stream;
+use rand::Rng;
+use tokio::runtime::Runtime;
+use tokio::timer::Timeout;
 
 mod add_torrent;
 mod complete_torrent;
@@ -23,9 +25,39 @@ mod remove_torrent;
 mod resume_torrent;
 mod start;
 
+/// Initiate a core loop with the given timeout, state, and closure.
+///
+/// Returns R or panics if an error occurred in the loop (including a timeout).
+fn core_loop_with_timeout<I, S, F, R>(runtime: &mut Runtime, timeout_ms: u64, state: (I, S), call: F) -> R
+where
+    F: FnMut(I, S, S::Item) -> Loop<R, (I, S)>,
+    S: Stream + Send,
+    R: Send
+{
+    let timeout = Timeout::new(Duration::from_millis(timeout_ms), Default::default());
+
+    // Have to stick the call in our init state so that we transfer ownership between loops
+    runtime.block_on(
+        future::loop_fn((call, state), |(mut call, (init, stream))| {
+            stream.into_future().map(|(opt_msg, stream)| {
+                let msg = opt_msg.unwrap_or_else(|| panic!("End Of Stream Reached"));
+
+                match call(init, stream, msg) {
+                    Loop::Continue((init, stream)) => Loop::Continue((call, (init, stream))),
+                    Loop::Break(ret) => Loop::Break(ret),
+                }
+            })
+        })
+        .map_err(|err| err)
+        .select(timeout)
+        .map(|(item, _)| item),
+    )
+    .unwrap_or_else(|_| panic!("Core Loop Timed Out"))
+}
+
 /// Send block with the given metadata and entire data given.
-fn send_block<F, M>(
-    mut blocking_send: DiskManagerSink<F>,
+fn send_block<S, M>(
+    blocking_send: &mut Wait<S>,
     data: &[u8],
     hash: InfoHash,
     piece_index: u64,
@@ -33,7 +65,7 @@ fn send_block<F, M>(
     block_len: usize,
     modify: M,
 ) where
-    F: FileSystem + Send + Sync + 'static,
+    S: Sink<SinkItem = IDiskMessage>,
     M: Fn(&mut [u8]),
 {
     let mut bytes = BytesMut::new();

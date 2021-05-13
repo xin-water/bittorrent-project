@@ -4,6 +4,10 @@ use bittorrent_protocol::disk::{
 };
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 use bytes::BytesMut;
+use futures::future::Loop;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio::runtime::Runtime;
 
 #[test]
 fn positive_remove_torrent() {
@@ -28,29 +32,33 @@ fn positive_remove_torrent() {
     let filesystem = InMemoryFileSystem::new();
     let disk_manager = DiskManagerBuilder::new().build(filesystem.clone());
 
-    let (mut blocking_send, mut recv) = disk_manager.into_parts();
+    let (send, recv) = disk_manager.split();
+    let mut blocking_send = send.wait();
     blocking_send
         .send(IDiskMessage::AddTorrent(metainfo_file))
         .unwrap();
 
     // Verify that zero pieces are marked as good
-    let mut good_pieces = 0;
-    loop {
-        let msg = recv.next().unwrap();
+    let mut runtime = Runtime::new().unwrap();
 
-        match msg {
+    let (mut blocking_send, good_pieces, recv) = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        ((blocking_send, 0), recv),
+        |(mut blocking_send, good_pieces), recv, msg| match msg {
             ODiskMessage::TorrentAdded(_) => {
                 blocking_send
                     .send(IDiskMessage::RemoveTorrent(info_hash))
                     .unwrap();
+                Loop::Continue(((blocking_send, good_pieces), recv))
             }
-            ODiskMessage::TorrentRemoved(_) => break,
+            ODiskMessage::TorrentRemoved(_) => Loop::Break((blocking_send, good_pieces, recv)),
             ODiskMessage::FoundGoodPiece(_, _) => {
-                good_pieces += 1;
+                Loop::Continue(((blocking_send, good_pieces + 1), recv))
             }
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        },
+    );
 
     assert_eq!(0, good_pieces);
 
@@ -66,11 +74,12 @@ fn positive_remove_torrent() {
         .send(IDiskMessage::ProcessBlock(process_block))
         .unwrap();
 
-    loop {
-        let msg = recv.next().unwrap();
-        match msg {
-            ODiskMessage::ProcessBlockError(_, _) => break,
-            unexpected => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+    super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        ((), recv),
+        |_, _, msg| match msg {
+        ODiskMessage::ProcessBlockError(_, _) => Loop::Break(()),
+        unexpected => panic!("Unexpected Message: {:?}", unexpected),
+    });
 }

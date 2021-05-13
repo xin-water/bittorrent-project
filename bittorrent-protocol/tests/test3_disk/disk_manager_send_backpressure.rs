@@ -1,6 +1,11 @@
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage};
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
+use futures::future::Future;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::{future, AsyncSink};
+use tokio::runtime::Runtime;
 
 #[test]
 fn positive_disk_manager_send_backpressure() {
@@ -23,16 +28,45 @@ fn positive_disk_manager_send_backpressure() {
 
     // Spin up a disk manager and add our created torrent to it
     let filesystem = InMemoryFileSystem::new();
-    let (mut m_send, mut m_recv) = DiskManagerBuilder::new()
-        .with_buffer_capacity(1)
+    let (m_send, m_recv) = DiskManagerBuilder::new()
+        .with_sink_buffer_capacity(1)
         .build(filesystem.clone())
-        .into_parts();
+        .split();
+
+    let mut runtime = Runtime::new().unwrap();
 
     // Add a torrent, so our receiver has a single torrent added message buffered
-    m_send
-        .send(IDiskMessage::AddTorrent(metainfo_file))
+    let mut m_send = runtime
+        .block_on(m_send.send(IDiskMessage::AddTorrent(metainfo_file)))
+        .unwrap();
+
+    // Try to send a remove message (but it should fail)
+    let (result, m_send) = runtime
+        .block_on(future::lazy(|| {
+            future::ok::<_, ()>((
+                m_send.start_send(IDiskMessage::RemoveTorrent(info_hash)),
+                m_send,
+            ))
+        }))
+        .unwrap();
+
+    match result {
+        Ok(AsyncSink::NotReady(_)) => (),
+        _ => panic!("Unexpected Result From Backpressure Test"),
+    };
+
+    // Receive from our stream to unblock the backpressure
+    let m_recv = runtime
+        .block_on(m_recv.into_future().map(|(_, recv)| recv).map_err(|_| ()))
         .unwrap();
 
     // Try to send a remove message again which should go through
-    m_send.send(IDiskMessage::RemoveTorrent(info_hash)).unwrap();
+    let _ = runtime
+        .block_on(m_send.send(IDiskMessage::RemoveTorrent(info_hash)))
+        .unwrap();
+
+    // Receive confirmation (just so the pool doesnt panic because we ended before it could send the message back)
+    let _ = runtime
+        .block_on(m_recv.into_future().map(|(_, recv)| recv).map_err(|_| ()))
+        .unwrap();
 }

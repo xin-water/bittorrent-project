@@ -4,6 +4,10 @@ use bittorrent_protocol::disk::{
 };
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 use bytes::BytesMut;
+use futures::future::Loop;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio::runtime::Runtime;
 
 #[test]
 fn positive_load_block() {
@@ -26,47 +30,50 @@ fn positive_load_block() {
     let filesystem = InMemoryFileSystem::new();
     let disk_manager = DiskManagerBuilder::new().build(filesystem.clone());
 
-    let mut process_block_bytemut = BytesMut::new();
-    process_block_bytemut.extend_from_slice(&data_b.0[1..(50 + 1)]);
+    let mut process_block = BytesMut::new();
+    process_block.extend_from_slice(&data_b.0[1..(50 + 1)]);
+
+    let mut load_block = BytesMut::with_capacity(50);
+    load_block.extend_from_slice(&[0u8; 50]);
 
     let process_block = Block::new(
         BlockMetadata::new(metainfo_file.info().info_hash(), 1, 0, 50),
-        process_block_bytemut.freeze(),
+        process_block.freeze(),
     );
-
-    let mut load_block_bytemut = BytesMut::with_capacity(50);
-    load_block_bytemut.extend_from_slice(&[0u8; 50]);
-
     let load_block = BlockMut::new(
         BlockMetadata::new(metainfo_file.info().info_hash(), 1, 0, 50),
-        load_block_bytemut,
+        load_block,
     );
 
-    let (mut blocking_send, mut recv) = disk_manager.into_parts();
+    let (send, recv) = disk_manager.split();
+    let mut blocking_send = send.wait();
     blocking_send
         .send(IDiskMessage::AddTorrent(metainfo_file))
         .unwrap();
 
-    loop {
-        let msg = recv.next().unwrap();
-        match msg {
+    let mut runtime = Runtime::new().unwrap();
+    let (pblock, lblock) = super::core_loop_with_timeout(
+        &mut runtime,
+        500,
+        ((blocking_send, Some(process_block), Some(load_block)), recv),
+        |(mut blocking_send, opt_pblock, opt_lblock), recv, msg| match msg {
             ODiskMessage::TorrentAdded(_) => {
                 blocking_send
-                    .send(IDiskMessage::ProcessBlock(process_block.clone()))
+                    .send(IDiskMessage::ProcessBlock(opt_pblock.unwrap()))
                     .unwrap();
+                Loop::Continue(((blocking_send, None, opt_lblock), recv))
             }
             ODiskMessage::BlockProcessed(block) => {
-                println!("pblock:\n{:?}", block);
-
                 blocking_send
-                    .send(IDiskMessage::LoadBlock(load_block.clone()))
+                    .send(IDiskMessage::LoadBlock(opt_lblock.unwrap()))
                     .unwrap();
+                Loop::Continue(((blocking_send, Some(block), None), recv))
             }
-            ODiskMessage::BlockLoaded(block) => {
-                println!("lblock:\n{:?}", block);
-                break;
-            }
+            ODiskMessage::BlockLoaded(block) => Loop::Break((opt_pblock.unwrap(), block)),
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        },
+    );
+
+    // Verify lblock contains our data
+    assert_eq!(*pblock, *lblock);
 }
