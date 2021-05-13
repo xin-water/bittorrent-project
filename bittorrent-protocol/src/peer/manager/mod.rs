@@ -16,8 +16,8 @@ pub mod error;
 use crate::peer::messages::PeerWireProtocolMessage;
 use std::net::TcpStream;
 
-//mod task;
-mod task;
+mod task_one_thread;
+mod task_split;
 
 mod try_clone;
 pub use try_clone::TryClone;
@@ -135,7 +135,7 @@ impl<S> PeerManagerSink<S>
                                 "bittorrent-protocol_peer: PeerManager Failed To Send AddPeer"
                             ),
                             Entry::Vacant(vac) => {
-                                vac.insert(task::run_peer(peer, info, send.clone()));
+                                vac.insert(task_split::run_peer(peer, info, send.clone()));
                             }
                         }
                     }

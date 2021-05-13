@@ -56,7 +56,7 @@ mod bits_ext;
 mod standard;
 
 /// Enumeration of messages for `PeerWireProtocol`.
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum PeerWireProtocolMessage
 {
     /// Message to keep the connection alive.

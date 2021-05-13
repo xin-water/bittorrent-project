@@ -18,7 +18,7 @@ mod null;
 pub use self::null::NullProtocolMessage;
 
 /// Enumeration of `BEP 10` extension protocol compatible messages.
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum PeerExtensionProtocolMessage
 {
     UtMetadata(UtMetadataMessage),

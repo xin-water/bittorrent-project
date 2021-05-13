@@ -2,7 +2,7 @@ use bytes::Bytes;
 use std::io::{self, Write};
 
 /// Enumeration of messages for `NullProtocol`.
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum NullProtocolMessage {}
 
 impl NullProtocolMessage{
