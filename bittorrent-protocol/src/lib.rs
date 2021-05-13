@@ -12,6 +12,12 @@ extern crate num_traits;
 #[cfg(test)]
 extern crate quickcheck;
 
+#[macro_use]
+extern crate futures;
+
+#[macro_use]
+extern crate tokio;
+
 pub mod util;
 
 #[macro_use]
