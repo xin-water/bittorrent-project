@@ -4,6 +4,10 @@ use bittorrent_protocol::disk::{
 };
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 use bytes::BytesMut;
+use futures::future::Loop;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio_core::reactor::Core;
 
 #[test]
 fn positive_process_block() {
@@ -34,25 +38,28 @@ fn positive_process_block() {
         process_bytes.freeze(),
     );
 
-    let (mut blocking_send, mut recv) = disk_manager.into_parts();
-
+    let (send, recv) = disk_manager.split();
+    let mut blocking_send = send.wait();
     blocking_send
         .send(IDiskMessage::AddTorrent(metainfo_file))
         .unwrap();
 
-    loop {
-        let msg = recv.next().unwrap();
-
-        match msg {
+    let mut core = Core::new().unwrap();
+    super::core_loop_with_timeout(
+        &mut core,
+        500,
+        ((blocking_send, Some(process_block)), recv),
+        |(mut blocking_send, opt_pblock), recv, msg| match msg {
             ODiskMessage::TorrentAdded(_) => {
                 blocking_send
-                    .send(IDiskMessage::ProcessBlock(process_block.clone()))
+                    .send(IDiskMessage::ProcessBlock(opt_pblock.unwrap()))
                     .unwrap();
+                Loop::Continue(((blocking_send, None), recv))
             }
-            ODiskMessage::BlockProcessed(_) => break,
+            ODiskMessage::BlockProcessed(_) => Loop::Break(()),
             unexpected @ _ => panic!("Unexpected Message: {:?}", unexpected),
-        };
-    }
+        },
+    );
 
     // Verify block was updated in data_b
     let mut received_file_b = filesystem.open_file(data_b.1).unwrap();

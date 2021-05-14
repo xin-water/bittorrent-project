@@ -1,6 +1,9 @@
 use std::collections::HashMap;
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
+
+use futures::sink::Sink;
+use futures::sink::Wait;
+use futures::sync::mpsc::Sender;
 
 use crate::disk::tasks::helpers::piece_checker::PieceCheckerState;
 use crate::disk::ODiskMessage;
@@ -36,8 +39,8 @@ impl<F> DiskManagerContext<F> {
         }
     }
 
-    pub fn blocking_sender(&self) -> Sender<ODiskMessage> {
-        self.out.clone()
+    pub fn blocking_sender(&self) -> Wait<Sender<ODiskMessage>> {
+        self.out.clone().wait()
     }
 
     pub fn filesystem(&self) -> &F {

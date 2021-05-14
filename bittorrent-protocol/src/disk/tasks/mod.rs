@@ -4,7 +4,8 @@ use crate::disk::error::{
 use crate::disk::{Block, BlockMut, FileSystem, IDiskMessage, ODiskMessage};
 use crate::metainfo::Metainfo;
 use crate::util::bt::InfoHash;
-use std::sync::mpsc::Sender;
+use futures::sink::Wait;
+use futures::sync::mpsc::Sender;
 use threadpool::ThreadPool;
 pub mod context;
 use self::context::DiskManagerContext;
@@ -13,18 +14,18 @@ mod helpers;
 use self::helpers::piece_accessor::PieceAccessor;
 use self::helpers::piece_checker::{PieceChecker, PieceCheckerState, PieceState};
 
-pub fn execute_on_pool<F>(msg: IDiskMessage, pool: ThreadPool, context: DiskManagerContext<F>)
+pub fn execute_on_pool<F>(msg: IDiskMessage, pool: &ThreadPool, context: DiskManagerContext<F>)
 where
     F: FileSystem + Send + Sync + 'static,
 {
     pool.execute(move || {
-        let  blocking_sender = context.blocking_sender();
+        let mut blocking_sender = context.blocking_sender();
 
         let out_msg = match msg {
             IDiskMessage::AddTorrent(metainfo) => {
                 let info_hash = metainfo.info().info_hash();
 
-                match execute_add_torrent(metainfo, &context, blocking_sender.clone()) {
+                match execute_add_torrent(metainfo, &context, &mut blocking_sender) {
                     Ok(_) => ODiskMessage::TorrentAdded(info_hash),
                     Err(err) => ODiskMessage::TorrentError(info_hash, err),
                 }
@@ -42,7 +43,7 @@ where
                 Err(err) => ODiskMessage::LoadBlockError(block, err),
             },
             IDiskMessage::ProcessBlock(mut block) => {
-                match execute_process_block(&mut block, &context, blocking_sender.clone()) {
+                match execute_process_block(&mut block, &context, &mut blocking_sender) {
                     Ok(_) => ODiskMessage::BlockProcessed(block),
                     Err(err) => ODiskMessage::ProcessBlockError(block, err),
                 }
@@ -52,18 +53,18 @@ where
         blocking_sender
             .send(out_msg)
             .expect("bittorrent-protocol_disk: Failed To Send Out Message In execute_on_pool");
-        // blocking_sender
-        //     .flush()
-        //     .expect("bittorrent-protocol_disk: Failed to Flush Out Messages In execute_on_pool");
+        blocking_sender
+            .flush()
+            .expect("bittorrent-protocol_disk: Failed to Flush Out Messages In execute_on_pool");
 
-        info!("EXECUTE_ON_POOL COMPLETE\n");
-    });
+        info!("EXECUTE_ON_POOL COMPLETE");
+    })
 }
 
 fn execute_add_torrent<F>(
     file: Metainfo,
     context: &DiskManagerContext<F>,
-    blocking_sender: Sender<ODiskMessage>,
+    blocking_sender: &mut Wait<Sender<ODiskMessage>>,
 ) -> TorrentResult<()>
 where
     F: FileSystem,
@@ -151,7 +152,7 @@ where
 fn execute_process_block<F>(
     block: &mut Block,
     context: &DiskManagerContext<F>,
-    blocking_sender: Sender<ODiskMessage>,
+    blocking_sender: &mut Wait<Sender<ODiskMessage>>,
 ) -> BlockResult<()>
 where
     F: FileSystem,
@@ -205,7 +206,7 @@ where
 fn send_piece_diff(
     checker_state: &mut PieceCheckerState,
     hash: InfoHash,
-    blocking_sender: Sender<ODiskMessage>,
+    blocking_sender: &mut Wait<Sender<ODiskMessage>>,
     ignore_bad: bool,
 ) {
     checker_state.run_with_diff(|piece_state| {
@@ -218,6 +219,9 @@ fn send_piece_diff(
         if let Some(out_msg) = opt_out_msg {
             blocking_sender
                 .send(out_msg)
+                .expect("bittorrent-protocol_disk: Failed To Send Piece State Message");
+            blocking_sender
+                .flush()
                 .expect("bittorrent-protocol_disk: Failed To Flush Piece State Message");
         }
     })

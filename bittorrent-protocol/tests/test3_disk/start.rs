@@ -1,4 +1,6 @@
 use bytes::BytesMut;
+use futures::sink::{self, Sink};
+use futures::stream::{self, Stream};
 use rand::{self, Rng};
 use std::fs;
 
@@ -6,10 +8,10 @@ use bittorrent_protocol::metainfo::{DirectAccessor, Metainfo, MetainfoBuilder, P
 use bittorrent_protocol::util::bt::InfoHash;
 
 use bittorrent_protocol::disk::FileHandleCache;
+use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{
     Block, BlockMetadata, DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage,
 };
-use bittorrent_protocol::disk::{DiskManagerSink, DiskManagerStream, NativeFileSystem};
 
 /// Set to true if you are playing around with anything that could affect file
 /// sizes for an existing or new benchmarks. As a precaution, if the disk manager
@@ -41,19 +43,18 @@ fn generate_single_file_torrent(piece_len: usize, file_len: usize) -> (Metainfo,
 }
 
 /// Adds the given metainfo file to the given sender, and waits for the added notification.
-fn add_metainfo_file<F>(
+fn add_metainfo_file<S, R>(
     metainfo: Metainfo,
-    block_send: &mut DiskManagerSink<F>,
-    block_recv: &mut DiskManagerStream,
+    block_send: &mut sink::Wait<S>,
+    block_recv: &mut stream::Wait<R>,
 ) where
-    F: FileSystem + Send + Sync + 'static,
+    S: Sink<SinkItem = IDiskMessage, SinkError = ()>,
+    R: Stream<Item = ODiskMessage, Error = ()>,
 {
-    (*block_send)
-        .send(IDiskMessage::AddTorrent(metainfo))
-        .unwrap();
+    block_send.send(IDiskMessage::AddTorrent(metainfo)).unwrap();
 
-    for res_message in (*block_recv).next() {
-        match res_message {
+    for res_message in block_recv {
+        match res_message.unwrap() {
             ODiskMessage::TorrentAdded(_) => {
                 break;
             }
@@ -65,15 +66,16 @@ fn add_metainfo_file<F>(
 
 /// Pushes the given bytes as piece blocks to the given sender, and blocks until all notifications
 /// of the blocks being processed have been received (does not check piece messages).
-fn process_blocks<F>(
+fn process_blocks<S, R>(
     piece_length: usize,
     block_length: usize,
     hash: InfoHash,
     bytes: &[u8],
-    mut block_send: DiskManagerSink<F>,
-    mut block_recv: DiskManagerStream,
+    block_send: &mut sink::Wait<S>,
+    block_recv: &mut stream::Wait<R>,
 ) where
-    F: FileSystem + Send + Sync + 'static,
+    S: Sink<SinkItem = IDiskMessage, SinkError = ()>,
+    R: Stream<Item = ODiskMessage, Error = ()>,
 {
     let mut blocks_sent = 0;
 
@@ -92,8 +94,9 @@ fn process_blocks<F>(
             blocks_sent += 1;
         }
     }
-    loop {
-        match block_recv.next().unwrap() {
+
+    for res_message in block_recv {
+        match res_message.unwrap() {
             ODiskMessage::BlockProcessed(_) => blocks_sent -= 1,
             ODiskMessage::FoundGoodPiece(_, _) => (),
             ODiskMessage::FoundBadPiece(_, _) => (),
@@ -119,20 +122,24 @@ fn bench_process_file_with_fs<F>(
     let info_hash = metainfo.info().info_hash();
 
     let disk_manager = DiskManagerBuilder::new()
-        .with_buffer_capacity(1000000)
+        .with_sink_buffer_capacity(1000000)
+        .with_stream_buffer_capacity(1000000)
         .build(fs);
 
-    let (mut d_send, mut d_recv) = disk_manager.into_parts();
+    let (d_send, d_recv) = disk_manager.split();
 
-    add_metainfo_file(metainfo, &mut d_send, &mut d_recv);
+    let mut block_d_send = d_send.wait();
+    let mut block_d_recv = d_recv.wait();
+
+    add_metainfo_file(metainfo, &mut block_d_send, &mut block_d_recv);
 
     process_blocks(
         piece_length,
         block_length,
         info_hash,
         &bytes[..],
-        d_send.clone(),
-        d_recv,
+        &mut block_d_send,
+        &mut block_d_recv,
     );
 }
 
