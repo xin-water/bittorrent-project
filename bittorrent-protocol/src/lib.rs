@@ -19,7 +19,7 @@ extern crate futures;
 extern crate futures_test;
 
 #[macro_use]
-extern crate tokio;
+extern crate tokio_core;
 
 pub mod util;
 
