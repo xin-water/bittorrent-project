@@ -9,6 +9,8 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 
+use futures::{Future, Sink, Stream};
+use tokio_core::reactor::Core;
 use bittorrent_protocol::handshake::transports::{TcpTransport,UtpTransport};
 use bittorrent_protocol::handshake::{HandshakerManagerBuilder, InitiateMessage, Protocol, Extension, Extensions };
 
@@ -46,21 +48,29 @@ fn main() {
     let str_addr = "127.0.0.1:44444";
     let addr = str_to_addr(&str_addr);
 
+    let mut runtime  = Core::new().unwrap();
+    let mut handle = runtime.handle();
+
     // Show up as a uTorrent client...
     let peer_id = (*b"-UT2060-000000000000").into();
 
     let mut ext =Extensions::new();
     ext.add(Extension::ExtensionProtocol);
-
-    let mut handshaker_manager = HandshakerManagerBuilder::new()
+    let (handshaker_manager_sink, handshaker_manager_steam) = HandshakerManagerBuilder::new()
         .with_peer_id(peer_id)
         .with_extensions(ext)
-        .build(UtpTransport)
-        .unwrap();
+        .build(TcpTransport,handle)
+        .unwrap()
+        .into_parts();
 
-    handshaker_manager.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr)).unwrap();
+    runtime.run(handshaker_manager_sink.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr))).unwrap();
 
-    let completemessage = handshaker_manager.poll().unwrap();
+    let completemessage = runtime.run(
+        handshaker_manager_steam
+                .into_future()
+                .map(|(opt_peer, _)| opt_peer.unwrap())
+        )
+        .unwrap_or_else(|_| panic!(""));
 
     let (pro,ext,hash, peer_id,addr,s) = completemessage.into_parts();
 

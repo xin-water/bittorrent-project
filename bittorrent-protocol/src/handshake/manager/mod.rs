@@ -1,12 +1,18 @@
 
 use std::cmp;
 use std::io;
-use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use rand::{self, Rng};
 
-use crossbeam::channel::{bounded, Receiver, SendError, Sender};
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::sync::mpsc::{self, Receiver, SendError, Sender};
+use futures::{Poll, StartSend, IntoFuture};
+use tokio_core::reactor::Handle;
+use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_timer::{self};
+
 use crate::util::bt::PeerId;
 use crate::util::convert;
 
@@ -24,7 +30,7 @@ use crate::handshake::filter::{HandshakeFilter, HandshakeFilters};
 use crate::handshake::handler;
 use crate::handshake::handler::listener::ListenerHandler;
 use crate::handshake::handler::timer::HandshakeTimer;
-use crate::handshake::handler::{handshaker, initiator, HandshakeType};
+use crate::handshake::handler::{handshaker, initiator};
 
 pub mod config;
 use self::config::HandshakerConfig;
@@ -43,7 +49,7 @@ impl HandshakerManagerBuilder {
     /// Create a new `HandshakerBuilder`.
     pub fn new() -> HandshakerManagerBuilder {
         let default_v4_addr = Ipv4Addr::new(0, 0, 0, 0);
-        let default_v4_port = 22222;
+        let default_v4_port = 0;
 
         let default_sock_addr = SocketAddr::V4(SocketAddrV4::new(default_v4_addr, default_v4_port));
 
@@ -106,12 +112,11 @@ impl HandshakerManagerBuilder {
     }
 
     /// Build a `Handshaker` over the given `Transport` with a `Remote` instance.
-    pub fn build<T>(&self, transport: T) -> io::Result<HandshakerManager<T::Socket>>
+    pub fn build<T>(&self, transport: T, handle: Handle) -> io::Result<HandshakerManager<T::Socket>>
         where
-            T: Transport + 'static + Send ,
-            <T as Transport>::Socket: Send,
+            T: Transport + 'static,
     {
-        HandshakerManager::with_builder(self, transport)
+        HandshakerManager::with_builder(self, transport, handle)
     }
 }
 
@@ -145,16 +150,17 @@ impl<S> DiscoveryInfo for HandshakerManager<S> {
 
 impl<S> HandshakerManager<S>
     where
-        S: Read + Write + 'static + Send ,
+        S: AsyncRead + AsyncWrite + 'static,
 {
     fn with_builder<T>(
         builder: &HandshakerManagerBuilder,
         transport: T,
+        handle: Handle,
     ) -> io::Result<HandshakerManager<T::Socket>>
         where
-            T: Transport<Socket = S> + 'static + Send,
+            T: Transport<Socket = S> + 'static,
     {
-        let listener = transport.listen(&builder.bind)?;
+        let listener = transport.listen(&builder.bind, &handle)?;
 
         // Resolve our "real" public port
         let open_port = if builder.port == 0 {
@@ -164,9 +170,9 @@ impl<S> HandshakerManager<S>
         };
 
         let config = builder.config;
-        let (addr_send, addr_recv) = bounded(config.sink_buffer_size());
-        let (hand_send, hand_recv) = bounded(config.wait_buffer_size());
-        let (sock_send, sock_recv) = bounded(config.done_buffer_size());
+        let (addr_send, addr_recv) = mpsc::channel(config.sink_buffer_size());
+        let (hand_send, hand_recv) = mpsc::channel(config.wait_buffer_size());
+        let (sock_send, sock_recv) = mpsc::channel(config.done_buffer_size());
 
         let filters = Filters::new();
         let (handshake_timer, initiate_timer) =
@@ -175,21 +181,24 @@ impl<S> HandshakerManager<S>
         // Hook up our pipeline of handlers which will take some connection info, process it, and forward it
         handler::loop_handler(
             addr_recv,
-            (transport, filters.clone(), initiate_timer),
+            (transport, filters.clone(), handle.clone(), initiate_timer),
             initiator::initiator_handler,
             hand_send.clone(),
+            &handle,
         );
         handler::loop_handler(
             listener,
             filters.clone(),
-            |item, context| { ListenerHandler::new(item, context).poll() },
+            ListenerHandler::new,
             hand_send,
+            &handle,
         );
         handler::loop_handler(
-            hand_recv,
+            hand_recv.map(Result::Ok).buffer_unordered(100),
             (builder.ext, builder.pid, filters.clone(), handshake_timer),
             handshaker::execute_handshake,
             sock_send,
+            &handle,
         );
 
         let sink = HandshakerManagerSink::new(addr_send, open_port, builder.pid, filters);
@@ -207,26 +216,43 @@ fn configured_handshake_timers(
     duration_one: Duration,
     duration_two: Duration,
 ) -> (HandshakeTimer, HandshakeTimer) {
+    let timer = tokio_timer::wheel()
+        .num_slots(64)
+        .max_timeout(cmp::max(duration_one, duration_two))
+        .build();
+
     (
-        HandshakeTimer::new( duration_one),
-        HandshakeTimer::new(duration_two),
+        HandshakeTimer::new(timer.clone(), duration_one),
+        HandshakeTimer::new(timer, duration_two),
     )
 }
 
-impl<S> HandshakerManager<S> {
+impl<S> Sink for HandshakerManager<S> {
+    type SinkItem = InitiateMessage;
+    type SinkError = SendError<InitiateMessage>;
 
-   pub fn send(
+    fn start_send(
         &mut self,
         item: InitiateMessage,
-    ) ->  Result<(), SendError<InitiateMessage>> {
-        self.sink.send(item)
+    ) -> StartSend<InitiateMessage, SendError<InitiateMessage>> {
+        self.sink.start_send(item)
     }
 
+    fn poll_complete(&mut self) -> Poll<(), SendError<InitiateMessage>> {
+        self.sink.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        Ok(futures::Async::Ready(()))
+    }
 }
 
-impl<S> HandshakerManager<S> {
+impl<S> Stream for HandshakerManager<S> {
+    type Item = CompleteMessage<S>;
+    type Error = ();
 
-   pub fn poll(&mut self) -> Result<CompleteMessage<S>, ()> {
+    fn poll(&mut self) -> Poll<Option<CompleteMessage<S>>, ()> {
         self.stream.poll()
     }
 }
@@ -288,16 +314,25 @@ impl DiscoveryInfo for HandshakerManagerSink {
     }
 }
 
-impl  HandshakerManagerSink {
+impl Sink for HandshakerManagerSink {
+    type SinkItem = InitiateMessage;
+    type SinkError = SendError<InitiateMessage>;
 
-   pub fn send(
+    fn start_send(
         &mut self,
         item: InitiateMessage,
-    ) -> Result<(), SendError<InitiateMessage>> {
-
-        self.send.send(item)
+    ) -> StartSend<InitiateMessage, SendError<InitiateMessage>> {
+        self.send.start_send(item)
     }
 
+    fn poll_complete(&mut self) -> Poll<(), SendError<InitiateMessage>> {
+        self.send.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        Ok(futures::Async::Ready(()))
+    }
 }
 
 impl HandshakeFilters for HandshakerManagerSink {
@@ -333,10 +368,12 @@ impl<S> HandshakerManagerStream<S> {
     }
 }
 
-impl<S>  HandshakerManagerStream<S> {
+impl<S> Stream for HandshakerManagerStream<S> {
+    type Item = CompleteMessage<S>;
+    type Error = ();
 
-   pub fn poll(&mut self) -> Result<CompleteMessage<S>, ()> {
-        self.recv.recv().map_err(|_|())
+    fn poll(&mut self) -> Poll<Option<CompleteMessage<S>>, ()> {
+        self.recv.poll()
     }
 }
 

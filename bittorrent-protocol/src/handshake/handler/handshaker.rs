@@ -1,5 +1,9 @@
 use std::net::SocketAddr;
-use std::io::{Read, Write};
+
+use futures::future::Future;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::util::bt::PeerId;
 
@@ -14,9 +18,9 @@ use crate::handshake::{CompleteMessage, Extensions, InitiateMessage};
 pub fn execute_handshake<S>(
     item: HandshakeType<S>,
     context: &(Extensions, PeerId, Filters, HandshakeTimer),
-) -> Result<Option<CompleteMessage<S>>, ()>
+) -> Box<dyn Future<Item = Option<CompleteMessage<S>>, Error = ()>>
 where
-    S: Read + Write + 'static,
+    S: AsyncRead + AsyncWrite + 'static,
 {
     let &(ref ext, ref pid, ref filters, ref timer) = context;
 
@@ -37,25 +41,26 @@ fn initiate_handshake<S>(
     pid: PeerId,
     filters: Filters,
     timer: HandshakeTimer,
-) -> Result<Option<CompleteMessage<S>>, ()>
+) -> Box<dyn Future<Item = Option<CompleteMessage<S>>, Error = ()>>
 where
-    S: Read + Write + 'static,
+    S: AsyncRead + AsyncWrite + 'static,
 {
-    let mut framed = FramedHandshake::new(sock);
+    let framed = FramedHandshake::new(sock);
 
     let (prot, hash, addr) = init_msg.into_parts();
     let handshake_msg = HandshakeMessage::from_parts(prot.clone(), ext, hash, pid);
 
-        framed.send(handshake_msg).map_err(|_| ());
-
-        timer.timeout();
-
-        let composed_future = framed
-            .poll()
-            .map_err(|_| ())
-            .and_then(|opt_msg| opt_msg.ok_or(()).map(|msg| msg))
-            .and_then(|msg|{
-
+    let composed_future = timer
+        .timeout(framed.send(handshake_msg).map_err(|_| ()))
+        .and_then(move |framed| {
+            timer
+                .timeout(
+                    framed
+                        .into_future()
+                        .map_err(|_| ())
+                        .and_then(|(opt_msg, framed)| opt_msg.ok_or(()).map(|msg| (msg, framed))),
+                )
+                .and_then(move |(msg, framed)| {
                     let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
                     let socket = framed.into_inner();
 
@@ -63,14 +68,15 @@ where
                     if remote_hash != hash
                         || remote_prot != prot
                         || handler::should_filter(
-                        Some(&addr),
-                        Some(&remote_prot),
-                        Some(&remote_ext),
-                        Some(&remote_hash),
-                        Some(&remote_pid),
-                        &filters,
-                    ) {
-                        Ok(None)
+                            Some(&addr),
+                            Some(&remote_prot),
+                            Some(&remote_ext),
+                            Some(&remote_hash),
+                            Some(&remote_pid),
+                            &filters,
+                        )
+                    {
+                        Err(())
                     } else {
                         Ok(Some(CompleteMessage::new(
                             prot,
@@ -82,9 +88,10 @@ where
                         )))
                     }
                 })
-                .or_else(|_|Ok(None));
+        })
+        .or_else(|_| Ok(None));
 
-    composed_future
+    Box::new(composed_future)
 }
 
 fn complete_handshake<S>(
@@ -94,17 +101,20 @@ fn complete_handshake<S>(
     pid: PeerId,
     filters: Filters,
     timer: HandshakeTimer,
-) -> Result<Option<CompleteMessage<S>>,()>
+) -> Box<dyn Future<Item = Option<CompleteMessage<S>>, Error = ()>>
 where
-    S: Read + Write + 'static,
+    S: AsyncRead + AsyncWrite + 'static,
 {
-    let mut framed = FramedHandshake::new(sock);
+    let framed = FramedHandshake::new(sock);
 
-    let composed_future = framed
-        .poll()
-        .map_err(|_|{()})
-        .and_then(|opt_msg| opt_msg.ok_or(()).map(|msg| msg))
-        .and_then(move |msg| {
+    let composed_future = timer
+        .timeout(
+            framed
+                .into_future()
+                .map_err(|_| ())
+                .and_then(|(opt_msg, framed)| opt_msg.ok_or(()).map(|msg| (msg, framed))),
+        )
+        .and_then(move |(msg, framed)| {
             let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
 
             // Check our filters
@@ -118,25 +128,32 @@ where
             ) {
                 Err(())
             } else {
-                    let handshake_msg = HandshakeMessage::from_parts(remote_prot.clone(), ext, remote_hash, pid);
-                    framed.send(handshake_msg);
+                let handshake_msg =
+                    HandshakeMessage::from_parts(remote_prot.clone(), ext, remote_hash, pid);
 
-                    timer.timeout();
+                Ok(timer.timeout(
+                    framed
+                        .send(handshake_msg)
+                        .map_err(|_| ())
+                        .map(move |framed| {
+                            let socket = framed.into_inner();
 
-                    let socket = framed.into_inner();
-                    Ok(Some(CompleteMessage::new(
+                            Some(CompleteMessage::new(
                                 remote_prot,
                                 ext.union(&remote_ext),
                                 remote_hash,
                                 remote_pid,
                                 addr,
                                 socket,
-                    )))
+                            ))
+                        }),
+                ))
             }
         })
+        .flatten()
         .or_else(|_| Ok(None));
 
-    composed_future
+    Box::new(composed_future)
 }
 
 #[cfg(test)]
@@ -173,7 +190,7 @@ mod tests {
     }
 
     fn any_handshake_timer() -> HandshakeTimer {
-        HandshakeTimer::new( Duration::from_millis(100))
+        HandshakeTimer::new(tokio_timer::wheel().build(), Duration::from_millis(100))
     }
 
     #[test]

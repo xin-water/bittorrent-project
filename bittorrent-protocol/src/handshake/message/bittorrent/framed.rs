@@ -1,11 +1,14 @@
 use bytes::buf::BufMut;
 use bytes::BytesMut;
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::{Async, AsyncSink, Poll, StartSend};
 use nom::IResult;
-use std::io::{self, Cursor, Write, Read};
+use std::io::{self, Cursor};
+use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::handshake::message::bittorrent::message;
 use crate::handshake::message::bittorrent::message::HandshakeMessage;
-use std::error::Error;
 
 enum HandshakeState {
     Waiting,
@@ -41,64 +44,81 @@ impl<S> FramedHandshake<S> {
     }
 }
 
-impl<S> FramedHandshake<S>
+impl<S> Sink for FramedHandshake<S>
     where
-        S: Write,
+        S: AsyncWrite,
 {
-    pub(crate) fn send(&mut self, item: HandshakeMessage) -> Result<(),io::Error> {
+    type SinkItem = HandshakeMessage;
+    type SinkError = io::Error;
+
+    fn start_send(&mut self, item: HandshakeMessage) -> StartSend<Self::SinkItem, Self::SinkError> {
         self.write_buffer.reserve(item.write_len());
         item.write_bytes(self.write_buffer.by_ref().writer())?;
 
-        loop {
-            let write_result = self.sock.write(&self.write_buffer);
+        Ok(AsyncSink::Ready)
+    }
 
-            match write_result {
-                Ok(0) => {
-                    return Err(
-                        io::Error::new(io::ErrorKind::WriteZero, "Failed To Write Bytes").into(),
-                    )
-                }
-                Ok(written) => {
-                    self.write_buffer.split_to(written);
-                }
-                _ => return Ok(()),
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        loop {
+            let write_result = self.sock.write_buf(&mut Cursor::new(&self.write_buffer));
+
+            let result_size = try_ready!(write_result);
+
+            if result_size == 0 {
+
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed To Write Bytes").into());
+
+            }else {
+
+                self.write_buffer.split_to(result_size);
             }
 
             if self.write_buffer.is_empty() {
-                self.sock.flush();
+                self.sock.flush()?;
 
-                return Ok(());
+                return Ok(Async::Ready(()));
             }
         }
     }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        // unimplemented!()
+        Ok(futures::Async::Ready(()))
+    }
 }
 
-impl<S>  FramedHandshake<S>
+impl<S> Stream for FramedHandshake<S>
     where
-        S: Read
+        S: AsyncRead,
 {
-    pub fn poll(&mut self) -> io::Result<Option<HandshakeMessage>> {
+    type Item = HandshakeMessage;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         loop {
             match self.state {
                 HandshakeState::Waiting => {
                     let read_result = self
                         .sock
-                        .read(&mut self.read_buffer[..]);
+                        .read_buf(&mut Cursor::new(&mut self.read_buffer[..]));
 
-                    match read_result {
-                        Ok(0) => return Ok(None),
-                        Ok(1) => {
-                            let length = self.read_buffer[0];
+                    let read_size = try_ready!(read_result);
 
-                            self.state = HandshakeState::Length(length);
+                    if read_size == 0 {
+                        return Ok(Async::Ready(None));
 
-                            self.read_pos = 1;
-                            self.read_buffer = vec![0u8; message::write_len_with_protocol_len(length)];
-                            self.read_buffer[0] = length;
-                        }
-                        Ok(read) => panic!("bittorrent-protocol_handshake: Expected To Read Single Byte, Read {:?}", read),
-                        _ => return Ok(None),
+                    }else if read_size == 1 {
+
+                        let length = self.read_buffer[0];
+                        self.state = HandshakeState::Length(length);
+                        self.read_pos = 1;
+                        self.read_buffer = vec![0u8; message::write_len_with_protocol_len(length)];
+                        self.read_buffer[0] = length;
+
+                    } else {
+                        panic!("bittorrent-protocol_handshake: Expected To Read Single Byte, Read {:?}", read_size);
                     }
+
                 }
                 HandshakeState::Length(length) => {
                     let expected_length = message::write_len_with_protocol_len(length);
@@ -108,7 +128,7 @@ impl<S>  FramedHandshake<S>
                             IResult::Done(_, message) => {
                                 self.state = HandshakeState::Finished;
 
-                                return Ok(Some(message));
+                                return Ok(Async::Ready(Some(message)));
                             }
                             IResult::Incomplete(_) => panic!("bittorrent-protocol_handshake: HandshakeMessage Failed With Incomplete Bytes"),
                             IResult::Error(_) => {
@@ -116,20 +136,20 @@ impl<S>  FramedHandshake<S>
                             }
                         }
                     } else {
+                        let read_result = {
+                            let mut cursor = Cursor::new(&mut self.read_buffer[self.read_pos..]);
 
-                        let read_buffer = &mut self.read_buffer[self.read_pos..];
-                        let read_result = self.sock.read(read_buffer);
+                            try_ready!(self.sock.read_buf(&mut cursor))
+                        };
 
-                        match read_result {
-                            Ok(0) => return Ok(None),
-                            Ok(read) => {
-                                self.read_pos += read;
-                            }
-                            _ => return Ok(None),
+                        if read_result == 0 {
+                            return Ok(Async::Ready(None));
+                        }else {
+                            self.read_pos += read_result;
                         }
                     }
                 }
-                HandshakeState::Finished => return Ok(None),
+                HandshakeState::Finished => return Ok(Async::Ready(None)),
             }
         }
     }
@@ -137,8 +157,11 @@ impl<S>  FramedHandshake<S>
 
 #[cfg(test)]
 mod tests {
-
     use std::io::{Cursor, Write};
+
+    use futures::sink::Sink;
+    use futures::stream::Stream;
+    use futures::Future;
 
     use crate::handshake::message::bittorrent::framed::FramedHandshake;
     use crate::handshake::message::bittorrent::message::HandshakeMessage;
@@ -170,8 +193,8 @@ mod tests {
 
         let write_frame = FramedHandshake::new(Cursor::new(Vec::new()))
             .send(message.clone())
+            .wait()
             .unwrap();
-
         let recv_buffer = write_frame.into_inner().into_inner();
 
         let mut exp_buffer = Vec::new();
@@ -197,10 +220,11 @@ mod tests {
 
         let write_frame = FramedHandshake::new(Cursor::new(Vec::new()))
             .send(message_one.clone())
+            .wait()
             .unwrap()
             .send(message_two.clone())
+            .wait()
             .unwrap();
-
         let recv_buffer = write_frame.into_inner().into_inner();
 
         let mut exp_buffer = Vec::new();
@@ -246,6 +270,8 @@ mod tests {
         buffer.write_all(&[55]).unwrap();
 
         let read_frame = FramedHandshake::new(&buffer[..])
+            .into_future()
+            .wait()
             .ok()
             .unwrap()
             .1;
@@ -271,6 +297,8 @@ mod tests {
         buffer.write_all(&[55, 54, 21]).unwrap();
 
         let read_frame = FramedHandshake::new(&buffer[..])
+            .into_future()
+            .wait()
             .ok()
             .unwrap()
             .1;

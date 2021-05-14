@@ -5,17 +5,22 @@ use std::thread;
 use bittorrent_protocol::handshake::transports::TcpTransport;
 use bittorrent_protocol::handshake::{DiscoveryInfo, HandshakerManagerBuilder};
 use bittorrent_protocol::util::bt;
+use futures::stream::Stream;
+use futures::Future;
+use tokio_core::reactor::Core;
+use tokio_io::io;
 
 #[test]
 fn positive_recover_bytes() {
+    let mut core = Core::new().unwrap();
 
     let mut handshaker_one_addr = "127.0.0.1:0".parse().unwrap();
     let handshaker_one_pid = [4u8; bt::PEER_ID_LEN].into();
 
-    let mut handshaker_one = HandshakerManagerBuilder::new()
+    let handshaker_one = HandshakerManagerBuilder::new()
         .with_bind_addr(handshaker_one_addr)
         .with_peer_id(handshaker_one_pid)
-        .build(TcpTransport)
+        .build(TcpTransport, core.handle())
         .unwrap();
 
     handshaker_one_addr.set_port(handshaker_one.port());
@@ -38,19 +43,19 @@ fn positive_recover_bytes() {
             .unwrap();
     });
 
-    let mut recv_buffer =   vec![0u8; 100];
-        handshaker_one
-        .poll()
-        .map_err(|_| ())
-        .and_then(|message| {
-            let (_, _, _, _, _, mut sock) = message.into_parts();
+    let recv_buffer = core
+        .run(
+            handshaker_one
+                .into_future()
+                .map_err(|_| ())
+                .and_then(|(opt_message, _)| {
+                    let (_, _, _, _, _, sock) = opt_message.unwrap().into_parts();
 
-            match sock.read(&mut recv_buffer){
-                Ok(v)=> Ok(v),
-                _ => Ok(0),
-            }
-
-        });
+                    io::read_exact(sock, vec![0u8; 100]).map_err(|_| ())
+                })
+                .and_then(|(_, buf)| Ok(buf)),
+        )
+        .unwrap();
 
     // Assert that our buffer contains the bytes after the handshake
     assert_eq!(vec![55u8; 100], recv_buffer);

@@ -3,7 +3,9 @@ use std::net::SocketAddr;
 use crate::handshake::filter::filters::Filters;
 use crate::handshake::handler;
 use crate::handshake::handler::HandshakeType;
-use std::io;
+
+use futures::future::Future;
+use futures::{Async, Poll};
 
 pub struct ListenerHandler<S> {
     opt_item: Option<HandshakeType<S>>,
@@ -23,10 +25,12 @@ impl<S> ListenerHandler<S> {
     }
 }
 
-impl<S>  ListenerHandler<S> {
+impl<S> Future for ListenerHandler<S> {
+    type Item = Option<HandshakeType<S>>;
+    type Error = ();
 
-   pub fn poll(&mut self) -> Result<Option<HandshakeType<S>>,()> {
-        Ok(self.opt_item.take())
+    fn poll(&mut self) -> Poll<Option<HandshakeType<S>>, ()> {
+        Ok(Async::Ready(self.opt_item.take()))
     }
 }
 

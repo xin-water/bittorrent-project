@@ -5,7 +5,6 @@ mod test_filter_allow_all;
 mod test_filter_block_all;
 mod test_filter_whitelist_diff_data;
 mod test_filter_whitelist_same_data;
-
 //----------------------------------------------------------------------------------//
 
 #[derive(PartialEq, Eq, Debug)]

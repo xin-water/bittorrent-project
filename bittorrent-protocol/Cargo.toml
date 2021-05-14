@@ -39,6 +39,7 @@ futures         = "0.1"
 tokio-core      = "0.1"
 tokio-timer     = "0.1"
 tokio-codec     = "0.1"
+tokio-io        = "0.1"
 
 [dev-dependencies]
 futures-test    = { git = "https://github.com/carllerche/better-future.git" }
