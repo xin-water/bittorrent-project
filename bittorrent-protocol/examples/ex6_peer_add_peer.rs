@@ -1,5 +1,12 @@
 use std::io;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use futures::sink::Sink;
+use futures::stream::Stream;
+use futures::sync::mpsc::{self, Receiver, Sender};
+use futures::{future, AsyncSink, Future};
+use futures::{Poll, StartSend};
+use tokio_core::net::{TcpListener, TcpStream};
+use tokio_core::reactor::Core;
 
 use bittorrent_protocol::handshake::Extensions;
 use bittorrent_protocol::peer::messages::PeerWireProtocolMessage;
@@ -10,21 +17,22 @@ use bittorrent_protocol::peer::{
 use bittorrent_protocol::util::bt;
 
 fn main() {
+    let mut runtime = Core::new().unwrap();
 
-    let mut manager = PeerManagerBuilder::new()
+    let manager = PeerManagerBuilder::new()
         .with_peer_capacity(1)
-        .build();
+        .build(runtime.handle());
 
     // Create two peers
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let tcplisten=TcpListener::bind(&socket).unwrap();
+    let tcplisten=TcpListener::bind(&socket, &runtime.handle()).unwrap();
     let listen_addr= tcplisten.local_addr().unwrap();
-    let  peer_one  = TcpStream::connect(&listen_addr).unwrap();
+    let  peer_one  = TcpStream::connect(&listen_addr, &runtime.handle()).wait().unwrap();
 
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let tcplisten=TcpListener::bind(&socket).unwrap();
+    let tcplisten=TcpListener::bind(&socket,&runtime.handle()).unwrap();
     let listen_addr= tcplisten.local_addr().unwrap();
-    let peer_two  = TcpStream::connect(&listen_addr).unwrap();
+    let peer_two  = TcpStream::connect(&listen_addr,&runtime.handle()).wait().unwrap();
 
     let peer_one_info = PeerInfo::new(
         peer_one.peer_addr().unwrap(),
@@ -41,10 +49,19 @@ fn main() {
     );
 
     // Add peer one to the manager
-    manager.send(IPeerManagerMessage::AddPeer(peer_one_info, peer_one));
+    let manager = runtime
+        .run( manager.send(IPeerManagerMessage::AddPeer(peer_one_info, peer_one))
+    ).unwrap();
 
     // Check that peer one was added
-    let response = manager.poll().unwrap();
+    let (response, mut manager) = runtime
+        .run(
+                 manager
+                .into_future()
+                .map(|(opt_item, stream)| (opt_item.unwrap(), stream))
+                .map_err(|_| ()),
+        )
+        .unwrap();
 
     match response {
         OPeerManagerMessage::PeerAdded(info) => {
@@ -53,13 +70,40 @@ fn main() {
         _ => panic!("Unexpected First Peer Manager Response"),
     };
 
+    // Try to add peer two, but make sure it was denied (start send returned not ready)
+    let (response, manager) = runtime
+        .run(
+            future::lazy(move || {
+                   future::ok::<_, ()>((
+                   manager.start_send(IPeerManagerMessage::AddPeer(peer_two_info, peer_two)),
+                   manager,
+            ))
+        })
+    ).unwrap();
+
+    let peer_two = match response {
+        Ok(AsyncSink::NotReady(IPeerManagerMessage::AddPeer(info, peer_two))) => {
+            println!("AddPeer\n1: {:?} \n=\n2: {:?}\n", peer_two_info, info);
+            peer_two
+        }
+        _ => panic!("Unexpected Second Peer Manager Response"),
+    };
 
     // Remove peer one from the manager
-    manager.send(IPeerManagerMessage::RemovePeer(peer_one_info));
+    let manager = runtime
+        .run(
+            manager
+                .send(IPeerManagerMessage::RemovePeer(peer_one_info)))
+        .unwrap();
 
     // Check that peer one was removed
-    let response = manager.poll().unwrap();
-
+    let (response, manager) = runtime
+        .run(
+            manager
+                .into_future()
+                .map(|(opt_item, stream)| (opt_item.unwrap(), stream))
+                .map_err(|_| ()),
+        ).unwrap();
 
     match response {
         OPeerManagerMessage::PeerRemoved(info) => {
@@ -70,10 +114,19 @@ fn main() {
     };
 
     // Try to add peer two, but make sure it goes through
-    manager.send(IPeerManagerMessage::AddPeer(peer_two_info, peer_two));
+    let manager = runtime
+        .run(
+            manager.send(IPeerManagerMessage::AddPeer(peer_two_info, peer_two))
+        ).unwrap();
 
-    let response = manager.poll().unwrap();
-
+    let (response, _manager) = runtime
+        .run(
+            manager
+                .into_future()
+                .map(|(opt_item, stream)| (opt_item.unwrap(), stream))
+                .map_err(|_| ()),
+        )
+        .unwrap();
 
     match response {
         OPeerManagerMessage::PeerAdded(info) => {

@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use bytes::Bytes;
 
 pub mod codec;
+pub mod tokio_codec;
 
 /// Trait for implementing a bittorrent protocol message.
 pub trait MessageCodec {

@@ -22,6 +22,7 @@ pub mod messages {
 mod message_codec;
 pub use message_codec::MessageCodec;
 pub use message_codec::codec::PeerWireMessageCodec;
+pub use message_codec::tokio_codec::PeerTokioCodec;
 
 mod manager;
 pub use manager::{
