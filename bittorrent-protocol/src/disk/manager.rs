@@ -55,37 +55,37 @@ impl<F> DiskManager<F> {
         (self.sink, self.stream)
     }
 }
-/*
+
 impl<F> Sink<IDiskMessage> for DiskManager<F>
 where
     F: FileSystem + Send + Sync + 'static,
 {
     type Error = ();
 
-    fn start_send(self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
-        self.sink.start_send(item)
+    fn start_send(mut self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
+        Pin::new(&mut self.sink).start_send(item)
     }
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.sink.poll_ready()
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_ready(cx)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.sink.poll_flush()
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_flush(cx)
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.sink.poll_close()
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_close(cx)
     }
 }
 
 impl<F> Stream for DiskManager<F> {
     type Item = ODiskMessage;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next()
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.stream).poll_next(cx)
     }
-}*/
+}
 
 //----------------------------------------------------------------------------//
 

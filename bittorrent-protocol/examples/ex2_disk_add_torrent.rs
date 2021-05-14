@@ -6,10 +6,11 @@ use std::io::{self, BufRead, Read, Write};
 use chrono::Local;
 use log::{debug, error, log_enabled, info};
 use simplelog::*;
-
+use futures::{Future, Sink, SinkExt, Stream, StreamExt};
+use tokio::runtime::Runtime;
 use bittorrent_protocol::metainfo::Metainfo;
 use bittorrent_protocol::disk::NativeFileSystem;
-use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
+use bittorrent_protocol::disk::{DiskManager,DiskManagerBuilder, IDiskMessage, ODiskMessage};
 
 fn main() {
     CombinedLogger::init(
@@ -18,20 +19,6 @@ fn main() {
             WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
         ]
     ).unwrap();
-
-    // info!("Utility For Allocating Disk Space For A Torrent File");
-
-    // let stdin = io::stdin();
-    // let mut input_lines = stdin.lock().lines();
-    // let mut stdout = io::stdout();
-    //
-    // print!("Enter the destination download directory: ");
-    // stdout.flush().unwrap();
-    // let download_path = input_lines.next().unwrap().unwrap();
-    //
-    // print!("Enter the full path to the torrent file: ");
-    // stdout.flush().unwrap();
-    // let torrent_path = input_lines.next().unwrap().unwrap();
 
     let torrent_path = "bittorrent-protocol/examples_data/torrent/music.torrent";
     let download_path = "bittorrent-protocol/examples_data/download";
@@ -45,7 +32,7 @@ fn main() {
 
     let native_fs = NativeFileSystem::with_directory(download_path);
 
-    let disk_manager = DiskManagerBuilder::new().build(native_fs);
+    let mut disk_manager = DiskManagerBuilder::new().build(native_fs);
 
     let (mut disk_send, mut disk_recv) = disk_manager.into_parts();
 
