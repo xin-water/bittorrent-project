@@ -10,7 +10,11 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
-use std::sync::mpsc::{self,Sender, Receiver};
+use futures::future::{Either, Loop};
+use futures::sync::mpsc;
+use futures::{future, stream, Future, Sink, Stream};
+use tokio_core::reactor::Core;
+use tokio_io::AsyncRead;
 
 use std::sync::{Arc,Mutex};
 use chrono::Local;
@@ -34,8 +38,6 @@ use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{
     Block, BlockMetadata, BlockMut, DiskManagerBuilder, IDiskMessage, ODiskMessage,
 };
-use std::net::TcpStream;
-use bittorrent_protocol::utp::UtpSocket;
 
 /*
     Things this example doesnt do, because of the lack of bittorrent_protocol_select:
@@ -69,13 +71,6 @@ enum SelectState {
     BadPiece(u64),
     TorrentSynced,
     TorrentAdded,
-}
-
-#[derive(Debug)]
-enum Either{
-    A(SelectState),
-    B(IDiskMessage),
-    C(IPeerManagerMessage<TcpStream>)
 }
 
 fn main() {
@@ -131,9 +126,9 @@ fn main() {
 
     let peer_id:PeerId = (*b"-UT2060-000000000000").into();
 
-    // Activate the extension protocol via the handshake bits
-    let mut extensions = Extensions::new();
-    extensions.add(Extension::ExtensionProtocol);
+    // Create our main "core" event loop
+    let mut runtime = Core::new().unwrap();
+    let handle= runtime.handle();
 
     // Create a handshaker that can initiate connections with peers
     // Create a handshaker that can initiate connections with peers
@@ -150,7 +145,7 @@ fn main() {
                 .with_wait_buffer_size(0)
                 .with_done_buffer_size(0),
         )
-        .build(TcpTransport) // Will handshake over TCP (could swap this for UTP in the future)
+        .build(TcpTransport,handle.clone()) // Will handshake over TCP (could swap this for UTP in the future)
         .unwrap()
         .into_parts();
 
@@ -160,241 +155,303 @@ fn main() {
         // for the peer manager as well.
         .with_sink_buffer_capacity(0)
         .with_stream_buffer_capacity(0)
-        .build()
+        .build(handle)
         .into_parts();
 
     // Create a disk manager to handle storing/loading blocks (we add in a file handle cache
     // to avoid anti virus causing slow file opens/closes, will cache up to 100 file handles)
-    let (mut disk_manager_send,mut disk_manager_recv) = DiskManagerBuilder::new()
+    let (disk_manager_send, disk_manager_recv) = DiskManagerBuilder::new()
         // Reducing our sink and stream capacities allow us to constrain memory usage
         // (though for spiky downloads, this could effectively throttle us, which is ok too.)
-        .with_buffer_capacity(100)
+        .with_sink_buffer_capacity(1)
+        .with_stream_buffer_capacity(0)
         .build(FileHandleCache::new(
             NativeFileSystem::with_directory(dir),
             100,
         ))
         .into_parts();
 
-    let (select_send, select_recv) = mpsc::channel( );
-
-    // Will hold a mapping of BlockMetadata -> Vec<PeerInfo> to track which peers to send a queued block to
-    let disk_request_map:Arc<Mutex<HashMap<BlockMetadata,Vec<PeerInfo>>>> = Arc::new(Mutex::new(HashMap::new()));
-
-
-    //////////////////////////////////////////////////////////////////////////////////////
+    let (select_send, select_recv) = mpsc::channel(50);
 
     // Hook up a future that feeds incoming (handshaken) peers over to the peer manager
-    let mut handshark_peer_manager_send = peer_manager_send.clone();
-    std::thread::spawn(move ||{
+    let handshark_peer_manager_send = peer_manager_send.clone().sink_map_err(|_| ());
+    runtime.handle().spawn(
+        handshaker_recv
+            .map_err(|_| ())
+            .map(|complete_msg| {
+                // Our handshaker finished handshaking some peer, get
+                // the peer info as well as the peer itself (socket)
+                let (_, _, hash, pid, addr, sock) = complete_msg.into_parts();
 
-            let (_, extensions, hash, pid, addr, sock) = handshaker_recv.poll().unwrap().into_parts();
+                // Create our peer identifier used by our peer manager
+                let peer_info = PeerInfo::new(addr, pid, hash, Extensions::new());
 
-            // Create our peer identifier used by our peer manager
-            let peer_info = PeerInfo::new(addr, pid, hash, extensions);
-
-            // Map to a message that can be fed to our peer manager
-            handshark_peer_manager_send.send( IPeerManagerMessage::AddPeer(peer_info, sock));
-
-    });
+                // Map to a message that can be fed to our peer manager
+                IPeerManagerMessage::AddPeer(peer_info, sock)
+            })
+            .forward(handshark_peer_manager_send)
+            .map(|_| ()),
+    );
 
     // Map out the errors for these sinks so they match
-    let mut peer_select_send = select_send.clone();
-    let mut peer_disk_manager_send = disk_manager_send.clone();
-    let mut arc_disk_request_map = disk_request_map.clone();
+    let mut peer_select_send = select_send.clone().sink_map_err(|_| ());
+    let mut peer_disk_manager_send = disk_manager_send.clone().sink_map_err(|_| ());
+    // Will hold a mapping of BlockMetadata -> Vec<PeerInfo> to track which peers to send a queued block to
+    let mut disk_request_map:Arc<Mutex<HashMap<BlockMetadata,Vec<PeerInfo>>>> = Arc::new(Mutex::new(HashMap::new()));
+
     // Hook up a future that receives messages from the peer manager, and forwards request to the disk manager or selection manager (using loop fn
     // here because we need to be able to access state, like request_map and a different future combinator wouldnt let us keep it around to access)
-    std::thread::spawn(move ||{
-        loop {
-            let opt_message = match peer_manager_recv.poll().unwrap() {
-                OPeerManagerMessage::PeerAdded(info) => {
-                    info!("[peer loop]: PeerAdded \n");
-                    Some(Either::A(SelectState::NewPeer(info)))
-                }
-                OPeerManagerMessage::SentMessage(_, _) => None,
-                OPeerManagerMessage::PeerRemoved(info) => {
-                    info!(
-                        "We Removed Peer {:?} \n------------From The Peer Manager",
-                        info
-                    );
-                    Some(Either::A(SelectState::RemovedPeer(info)))
-                }
-                OPeerManagerMessage::PeerDisconnect(info) => {
-                    info!("Peer {:?} \n------------Disconnected From Us", info);
-                    Some(Either::A(SelectState::RemovedPeer(info)))
-                }
-                OPeerManagerMessage::PeerError(info, error) => {
-                    info!(
-                        "Peer {:?} \n------------Disconnected With Error: {:?}",
-                        info, error
-                    );
-                    Some(Either::A(SelectState::RemovedPeer(info)))
-                }
-                OPeerManagerMessage::ReceivedMessage(info, message) => {
-                        match message {
-                            PeerWireProtocolMessage::Choke => {
-                                info!("[peer loop ReceivedMessage]: Choke \n");
-                                Some(Either::A(SelectState::Choke(info)))
-                            }
-                            PeerWireProtocolMessage::UnChoke => {
-                                info!("[peer loop ReceivedMessage]: UnChoke \n");
-                                Some(Either::A(SelectState::UnChoke(info)))
-                            }
-                            PeerWireProtocolMessage::Interested => {
-                                info!("[peer loop ReceivedMessage]: Interested \n");
-                                Some(Either::A(SelectState::Interested(info)))
-                            }
-                            PeerWireProtocolMessage::UnInterested => {
-                                info!("[peer loop ReceivedMessage]: UnInterested \n");
-                                Some(Either::A(SelectState::UnInterested(info)))
-                            }
-                            PeerWireProtocolMessage::Have(have) => {
-                                info!("[peer loop ReceivedMessage]: Have {:?}\n",&have.piece_index());
-                                Some(Either::A(SelectState::Have(info, have)))
-                            }
-                            PeerWireProtocolMessage::BitField(bitfield) => {
-                                info!("[peer loop ReceivedMessage]: bitfield \n");
-                                Some(Either::A(SelectState::BitField(info, bitfield)))
-                            }
-                            PeerWireProtocolMessage::Piece(piece) => {
-                                info!("[peer loop ReceivedMessage]: piece_index :oX{:x}, block_offset:oX{:x}, block_length:oX{:x} \n",&piece.piece_index(),&piece.block_offset(),&piece.block_length());
-                                let block_metadata = BlockMetadata::new(
-                                    info_hash,
-                                    piece.piece_index() as u64,
-                                    piece.block_offset() as u64,
-                                    piece.block_length(),
-                                );
-
-                                // Peer sent us a block, send it over to the disk manager to be processed
-                                Some(Either::B(IDiskMessage::ProcessBlock(Block::new(
-                                    block_metadata,
-                                    piece.block(),
-                                ))))
-                            }
-                            PeerWireProtocolMessage::Request(request) => {
-                                info!("[peer loop ReceivedMessage]: Request :{:?} \n",&request.piece_index());
-
-                                let block_metadata = BlockMetadata::new(
-                                    info_hash,
-                                    request.piece_index() as u64,
-                                    request.block_offset() as u64,
-                                    request.block_length(),
-                                );
-
-                                // Lookup the peer info given the block metadata
-                                let mut request_map_mut ;
-                                loop {
-                                    if let Ok(val) = arc_disk_request_map.lock(){
-                                        request_map_mut = val;
-                                        break
-                                    }
-                                }
-
-                                // Add the block metadata to our request map, and add the peer as an entry there
-                                let block_entry = request_map_mut.entry(block_metadata);
-                                let peers_requested = block_entry.or_insert(Vec::new());
-
-                                peers_requested.push(info);
-
-                                Some(Either::B(IDiskMessage::LoadBlock(BlockMut::new(
-                                    block_metadata,
-                                    vec![0u8; block_metadata.block_length()].into(),
-                                ))))
-                            }
-                            _ => None,
+    runtime.handle().spawn(future::loop_fn(
+        (
+            peer_manager_recv,
+            info_hash,
+            disk_request_map.clone(),
+            peer_select_send,
+            peer_disk_manager_send,
+        ),
+        |(peer_manager_recv, info_hash, disk_request_map, select_send, disk_manager_send)| {
+            peer_manager_recv.into_future().map_err(|_| ()).and_then( move |(opt_item, peer_manager_recv)| {
+                    let opt_message = match opt_item.unwrap() {
+                        OPeerManagerMessage::PeerAdded(info) => {
+                            Some(Either::A(SelectState::NewPeer(info)))
                         }
-                }
-            };
+                        OPeerManagerMessage::SentMessage(_, _) => None,
+                        OPeerManagerMessage::PeerRemoved(info) => {
+                            info!(
+                                "We Removed Peer {:?} \n------------From The Peer Manager",
+                                info
+                            );
+                            Some(Either::A(SelectState::RemovedPeer(info)))
+                        }
+                        OPeerManagerMessage::PeerDisconnect(info) => {
+                            info!("Peer {:?} \n------------Disconnected From Us", info);
+                            Some(Either::A(SelectState::RemovedPeer(info)))
+                        }
+                        OPeerManagerMessage::PeerError(info, error) => {
+                            info!(
+                                "Peer {:?} \n------------Disconnected With Error: {:?}",
+                                info, error
+                            );
+                            Some(Either::A(SelectState::RemovedPeer(info)))
+                        }
+                        OPeerManagerMessage::ReceivedMessage(info, message) => {
+                            match message {
+                                PeerWireProtocolMessage::Choke => {
+                                    Some(Either::A(SelectState::Choke(info)))
+                                }
+                                PeerWireProtocolMessage::UnChoke => {
+                                    Some(Either::A(SelectState::UnChoke(info)))
+                                }
+                                PeerWireProtocolMessage::Interested => {
+                                    Some(Either::A(SelectState::Interested(info)))
+                                }
+                                PeerWireProtocolMessage::UnInterested => {
+                                    Some(Either::A(SelectState::UnInterested(info)))
+                                }
+                                PeerWireProtocolMessage::Have(have) => {
+                                    Some(Either::A(SelectState::Have(info, have)))
+                                }
+                                PeerWireProtocolMessage::BitField(bitfield) => {
+                                    Some(Either::A(SelectState::BitField(info, bitfield)))
+                                }
+                                PeerWireProtocolMessage::Piece(piece) => {
+                                    info!("[peer loop ReceivedMessage]: piece_index :oX{:x}, block_offset:oX{:x}, block_length:oX{:x} \n",&piece.piece_index(),&piece.block_offset(),&piece.block_length());
+                                    let block_metadata = BlockMetadata::new(
+                                        info_hash,
+                                        piece.piece_index() as u64,
+                                        piece.block_offset() as u64,
+                                        piece.block_length(),
+                                    );
 
-            // Could optimize out the box, but for the example, this is cleaner and shorter
-            match opt_message {
-                Some(Either::A(select_message)) => {
-                    peer_select_send.send(select_message).unwrap();
-                }
-                Some(Either::B(disk_message)) => {
-                    peer_disk_manager_send.send(disk_message).unwrap();
-                }
-                _ => {}
-            };
+                                    // Peer sent us a block, send it over to the disk manager to be processed
+                                    Some(Either::B(IDiskMessage::ProcessBlock(Block::new(
+                                        block_metadata,
+                                        piece.block(),
+                                    ))))
+                                }
+                                PeerWireProtocolMessage::Request(request) => {
+                                    info!("[peer loop ReceivedMessage]: Request :{:?} \n",&request.piece_index());
+                                    let block_metadata = BlockMetadata::new(
+                                        info_hash,
+                                        request.piece_index() as u64,
+                                        request.block_offset() as u64,
+                                        request.block_length(),
+                                    );
 
-        }
-    });
+                                    // Lookup the peer info given the block metadata
+                                    let mut request_map_mut ;
+                                    loop {
+                                        if let Ok(val) = disk_request_map.lock(){
+                                            request_map_mut = val;
+                                            break
+                                        }
+                                    }
+
+                                    // Add the block metadata to our request map, and add the peer as an entry there
+                                    let block_entry = request_map_mut.entry(block_metadata);
+                                    let peers_requested = block_entry.or_insert(Vec::new());
+
+                                    peers_requested.push(info);
+
+                                    Some(Either::B(IDiskMessage::LoadBlock(BlockMut::new(
+                                        block_metadata,
+                                        vec![0u8; block_metadata.block_length()].into(),
+                                    ))))
+                                }
+                                _ => None,
+                            }
+                        }
+                    };
+
+                    // Could optimize out the box, but for the example, this is cleaner and shorter
+                    let result_future: Box<dyn Future<Item = Loop<(), _>, Error = ()> + Send> =
+                        match opt_message {
+                            Some(Either::A(select_message)) => {
+                                Box::new(select_send.send(select_message).map(move |select_send| {
+                                    Loop::Continue((
+                                        peer_manager_recv,
+                                        info_hash,
+                                        disk_request_map,
+                                        select_send,
+                                        disk_manager_send,
+                                    ))
+                                }))
+                            }
+
+                            Some(Either::B(disk_message)) => {
+                                Box::new(disk_manager_send.send(disk_message).map(move |disk_manager_send| {
+                                        Loop::Continue((
+                                            peer_manager_recv,
+                                            info_hash,
+                                            disk_request_map,
+                                            select_send,
+                                            disk_manager_send,
+                                        ))
+                                    },
+                                ))
+                            }
+
+                            None => Box::new(future::ok(Loop::Continue((
+                                peer_manager_recv,
+                                info_hash,
+                                disk_request_map,
+                                select_send,
+                                disk_manager_send,
+                            )))),
+                        };
+
+                    result_future
+                },
+            )
+        },
+    ));
 
 
-    let mut disk_peer_manager_send = peer_manager_send.clone();
+    let mut disk_peer_manager_send = peer_manager_send.clone().sink_map_err(|_| ());
     // Map out the errors for these sinks so they match
-    let disk_select_send = select_send.clone();
+    let disk_select_send = select_send.clone().sink_map_err(|_| ());
     // Hook up a future that receives from the disk manager, and forwards to the peer manager or select manager
-    std::thread::spawn(move | | {
-         loop {
-             let msg = disk_manager_recv.next().unwrap();
-             let opt_message = match msg  {
-                 ODiskMessage::TorrentAdded(_) => Some(Either::A(SelectState::TorrentAdded)),
-                 ODiskMessage::TorrentSynced(_) => {
-                     Some(Either::A(SelectState::TorrentSynced))
-                 }
-                 ODiskMessage::FoundGoodPiece(_, index) => {
-                     Some(Either::A(SelectState::GoodPiece(index)))
-                 }
-                 ODiskMessage::FoundBadPiece(_, index) => {
-                     Some(Either::A(SelectState::BadPiece(index)))
-                 }
-                 ODiskMessage::BlockProcessed(block) => {
-                     info!("[disk] BlockProcessed: piece_index :0X{:x}, block_offset :0X{:x}, block_length :0X{:x},",block.metadata().piece_index(),block.metadata().block_offset(),block.metadata().block_length());
-                     Some(Either::A(SelectState::BlockProcessed))
-                 }
-                 ODiskMessage::BlockLoaded(block) => {
-                     let (metadata, block) = block.into_parts();
+    runtime.handle().spawn(future::loop_fn(
+        (
+            disk_manager_recv,
+            disk_request_map.clone(),
+            disk_select_send,
+            disk_peer_manager_send,
+        ),
+        |(disk_manager_recv, disk_request_map, select_send, peer_manager_send)| {
+            disk_manager_recv.into_future().map_err(|_| ()).and_then(|(opt_item, disk_manager_recv)| {
 
-                     // Lookup the peer info given the block metadata
-                     let mut request_map_mut ;
-                     loop {
-                         if let Ok(val) = disk_request_map.lock(){
-                             request_map_mut = val;
-                             break
-                         }
-                     }
-                     let mut peer_list = request_map_mut.get_mut(&metadata).unwrap();
-                     let peer_info = peer_list.remove(1);
+                    let opt_message = match opt_item.unwrap() {
+                        ODiskMessage::TorrentAdded(_) => Some(Either::A(SelectState::TorrentAdded)),
+                        ODiskMessage::TorrentSynced(_) => {
+                            Some(Either::A(SelectState::TorrentSynced))
+                        }
+                        ODiskMessage::FoundGoodPiece(_, index) => {
+                            Some(Either::A(SelectState::GoodPiece(index)))
+                        }
+                        ODiskMessage::FoundBadPiece(_, index) => {
+                            Some(Either::A(SelectState::BadPiece(index)))
+                        }
+                        ODiskMessage::BlockProcessed(_) => {
+                            Some(Either::A(SelectState::BlockProcessed))
+                        }
+                        ODiskMessage::BlockLoaded(block) => {
+                            let (metadata, block) = block.into_parts();
 
-                     // Pack up our block into a peer wire protocol message and send it off to the peer
-                     let piece = PieceMessage::new(
-                         metadata.piece_index() as u32,
-                         metadata.block_offset() as u32,
-                         block.freeze(),
-                     );
-                     let pwp_message = PeerWireProtocolMessage::Piece(piece);
+                            // Lookup the peer info given the block metadata
+                            let mut request_map_mut ;
+                            loop {
+                                if let Ok(val) = disk_request_map.lock(){
+                                    request_map_mut = val;
+                                    break
+                                }
+                            }
 
-                     Some(Either::C(IPeerManagerMessage::SendMessage(
-                         peer_info,
-                         0,
-                         pwp_message,
-                     )))
-                 }
-                 _ => None,
-             };
+                            let mut peer_list = request_map_mut.get_mut(&metadata).unwrap();
+                            let peer_info = peer_list.remove(1);
 
-             // Could optimize out the box, but for the example, this is cleaner and shorter
-                 match opt_message {
-                     Some(Either::A(select_message)) => {
-                         disk_select_send.send(select_message);
-                     }
+                            // Pack up our block into a peer wire protocol message and send it off to the peer
+                            let piece = PieceMessage::new(
+                                metadata.piece_index() as u32,
+                                metadata.block_offset() as u32,
+                                block.freeze(),
+                            );
+                            let pwp_message = PeerWireProtocolMessage::Piece(piece);
 
-                     Some(Either::C(peer_message)) => {
-                         disk_peer_manager_send.send(peer_message);
-                     }
+                            Some(Either::B(IPeerManagerMessage::SendMessage(
+                                peer_info,
+                                0,
+                                pwp_message,
+                            )))
+                        }
+                        _ => None,
+                    };
 
-                     None => {}
-                     _ => {}
-                 };
+                    // Could optimize out the box, but for the example, this is cleaner and shorter
+                    let result_future: Box<dyn Future<Item = Loop<(), _>, Error = ()> + Send> =
+                        match opt_message {
+                            Some(Either::A(select_message)) => {
+                                Box::new(select_send.send(select_message).map(|select_send| {
+                                    Loop::Continue((
+                                        disk_manager_recv,
+                                        disk_request_map,
+                                        select_send,
+                                        peer_manager_send,
+                                    ))
+                                }))
+                            }
 
-         }
-     });
+                            Some(Either::B(peer_message)) => {
+                                Box::new(peer_manager_send.send(peer_message).map(
+                                    |peer_manager_send| {
+                                        Loop::Continue((
+                                            disk_manager_recv,
+                                            disk_request_map,
+                                            select_send,
+                                            peer_manager_send,
+                                        ))
+                                    },
+                                ))
+                            }
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
+                            None => Box::new(future::ok(Loop::Continue((
+                                disk_manager_recv,
+                                disk_request_map,
+                                select_send,
+                                peer_manager_send,
+                            )))),
+                        };
+
+                    result_future
+                },
+            )
+        },
+    ));
 
     // Have our disk manager allocate space for our torrent and start tracking it
     info!("添加种子并校验本地数据: send IDiskMessage AddTorrent ");
-    disk_manager_send.send(IDiskMessage::AddTorrent(metainfo.clone()));
+    let map_disk_manager_send = disk_manager_send.clone().sink_map_err(|_| ());
+    runtime.block_on(map_disk_manager_send.send(IDiskMessage::AddTorrent(metainfo.clone())));
     info!("添加种子并校验本地数据: complete IDiskMessage AddTorrent");
 
     // Generate data structure to track the requests we need to make, the requests that have been fulfilled, and an active peers list
@@ -405,32 +462,42 @@ fn main() {
     let mut cur_pieces = 0;
     //  过滤块请求队列;
     // For any pieces we already have on the file system (and are marked as good), we will be removing them from our requests map
-    loop {
-       match select_recv.recv().unwrap() {
-            // Disk manager identified a good piece already downloaded
-            SelectState::GoodPiece(index) => {
-                piece_requests = piece_requests
-                    .into_iter()
-                    .filter(|req| req.piece_index() != index as u32)
-                    .collect();
+    let (select_recv, piece_requests, cur_pieces) = runtime.run(
+        future::loop_fn(
+            (select_recv, piece_requests, cur_pieces),
+            |(select_recv, mut piece_requests, cur_pieces)| {
+                select_recv
+                    .into_future()
+                    .map(move |(opt_item, select_recv)| {
+                        match opt_item.unwrap() {
+                            // Disk manager identified a good piece already downloaded
+                            SelectState::GoodPiece(index) => {
+                                piece_requests = piece_requests
+                                    .into_iter()
+                                    .filter(|req| req.piece_index() != index as u32)
+                                    .collect();
+                                Loop::Continue((select_recv, piece_requests, cur_pieces + 1))
+                            }
+                            // Disk manager is finished identifying good pieces, torrent has been added
+                            SelectState::TorrentAdded => {
+                                Loop::Break((select_recv, piece_requests, cur_pieces))
+                            }
 
-                cur_pieces +=1 ;
-            }
-            // Disk manager is finished identifying good pieces, torrent has been added
-            SelectState::TorrentAdded => {
-                break;
-            }
-
-            // Shouldnt be receiving any other messages...
-            // message => panic!("Unexpected Message Received In Selection Receiver: {:?}", message),
-            message => {
-                info!(
-                    "Unexpected Message Received In Selection Receiver: {:?}",
-                    message
-                );
-            }
-        }
-    }
+                            // Shouldnt be receiving any other messages...
+                            // message => panic!("Unexpected Message Received In Selection Receiver: {:?}", message),
+                            message => {
+                                info!(
+                                    "Unexpected Message Received In Selection Receiver: {:?}",
+                                    message
+                                );
+                                Loop::Continue((select_recv, piece_requests, cur_pieces))
+                            }
+                        }
+                    })
+                    .map_err(|_| ())
+            },
+        ))
+        .unwrap();
     info!("添加种子并校验本地数据: end 过滤块请求队列:");
 
     let total_pieces = metainfo.info().pieces().count();
@@ -444,135 +511,171 @@ fn main() {
 
     info!("下载: 发起握手");
     // Send the peer given from the command line over to the handshaker to initiate a connection
-    handshaker_send.send(InitiateMessage::new(Protocol::BitTorrent, info_hash, peer_addr)).unwrap();
+    runtime.run(handshaker_send.send(InitiateMessage::new(Protocol::BitTorrent, info_hash, peer_addr)).map_err(|_| ())).unwrap();
 
     info!("下载: 正在下载 ");
     // Finally, setup our main event loop to drive the tasks we setup earlier
+    let selecr_peer_manager_send = peer_manager_send.sink_map_err(|_| ());
+    let result: Result<(), ()> = runtime.run(future::loop_fn(
+        (
+            select_recv,
+            selecr_peer_manager_send,
+            piece_requests,
+            None,
+            false,
+            0,
+            cur_pieces,
+            total_pieces,
+        ),
+        |(
+            select_recv,
+            map_peer_manager_send,
+            mut piece_requests,
+            mut opt_peer,
+            mut unchoked,
+            mut blocks_pending,
+            mut cur_pieces,
+            total_pieces,
+        )| {
+            select_recv
+                .into_future()
+                .map_err(|_| ())
+                .and_then(move |(opt_message, select_recv)| {
+                    // println!("\n收到消息：{:?}", &opt_message);
 
-    let mut opt_peer :Option<PeerInfo>= None;
-    let mut unchoked = false;
-    let mut blocks_pending = 0;
-    loop {
-        let msg = select_recv.recv().unwrap();
-        info!("[select loop]: 接受到消息{:?}", &msg);
-        let send_messages = match msg {
-            SelectState::BitField(info, msg) => {
-                // Peer choked us, cant be sending any requests to them for now
-                vec![
-                    IPeerManagerMessage::SendMessage(
-                        info,
-                        0,
-                        PeerWireProtocolMessage::Interested,
-                    )
-                ]
-            }
-            SelectState::Choke(_) => {
-                // Peer choked us, cant be sending any requests to them for now
-                unchoked = false;
-                vec![]
-            }
-            SelectState::UnChoke(_) => {
-                // Peer unchoked us, we can continue sending sending requests to them
-                unchoked = true;
-                vec![]
-            }
-            SelectState::NewPeer(info) => {
-                // A new peer connected to us, store its contact info (just supported one peer atm),
-                // and go ahead and express our interest in them, and unchoke them (we can upload to them)
-                // We dont send a bitfield message (just to keep things simple).
-                opt_peer = Some(info);
-                vec![
-                    IPeerManagerMessage::SendMessage(
-                        info,
-                        0,
-                        PeerWireProtocolMessage::Interested,
-                    ),
-                    IPeerManagerMessage::SendMessage(
-                        info,
-                        0,
-                        PeerWireProtocolMessage::UnChoke,
-                    ),
-                ]
-            }
-            SelectState::BlockProcessed => {
-                // Disk manager let us know a block was processed (one of our requests made it
-                // from the peer manager, to the disk manager, and this is the acknowledgement)
-                blocks_pending -= 1;
-                vec![]
-            }
-            SelectState::GoodPiece(piece) => {
-                // Disk manager has processed endough blocks to make up a piece, and that piece
-                // was verified to be good (checksummed). Go ahead and increment the number of
-                // pieces we have. We dont handle bad pieces here (since we deleted our request
-                // but ideally, we would recreate those requests and resend/blacklist the peer).
-                cur_pieces += 1;
-                info!("[select loop]: 已存储 {:?}",cur_pieces);
-                if let Some(peer) = opt_peer {
-                    // Send our have message back to the peer
-                    vec![IPeerManagerMessage::SendMessage(
-                        peer,
-                        0,
-                        PeerWireProtocolMessage::Have(HaveMessage::new(piece as u32)),
-                    )]
-                } else {
-                    vec![]
-                }
-            }
-            // Decided not to handle these two cases here
-            SelectState::RemovedPeer(info) => {
-                panic!("Peer {:?} \n----------Got Disconnected", info)
-            }
-            SelectState::BadPiece(_) => panic!("Peer Gave Us Bad Piece"),
-            _ => vec![],
-        };
+                    // Handle the current selection messsage, decide any control messages we need to send
+                    let send_messages = match opt_message.unwrap() {
+                        SelectState::BlockProcessed => {
+                            // Disk manager let us know a block was processed (one of our requests made it
+                            // from the peer manager, to the disk manager, and this is the acknowledgement)
+                            blocks_pending -= 1;
+                            vec![]
+                        }
+                        SelectState::Choke(_) => {
+                            // Peer choked us, cant be sending any requests to them for now
+                            unchoked = false;
+                            vec![]
+                        }
+                        SelectState::UnChoke(_) => {
+                            // Peer unchoked us, we can continue sending sending requests to them
+                            unchoked = true;
+                            vec![]
+                        }
+                        SelectState::NewPeer(info) => {
+                            // A new peer connected to us, store its contact info (just supported one peer atm),
+                            // and go ahead and express our interest in them, and unchoke them (we can upload to them)
+                            // We dont send a bitfield message (just to keep things simple).
+                            opt_peer = Some(info);
+                            vec![
+                                IPeerManagerMessage::SendMessage(
+                                    info,
+                                    0,
+                                    PeerWireProtocolMessage::Interested,
+                                ),
+                                IPeerManagerMessage::SendMessage(
+                                    info,
+                                    0,
+                                    PeerWireProtocolMessage::UnChoke,
+                                ),
+                            ]
+                        }
+                        SelectState::GoodPiece(piece) => {
+                            // Disk manager has processed endough blocks to make up a piece, and that piece
+                            // was verified to be good (checksummed). Go ahead and increment the number of
+                            // pieces we have. We dont handle bad pieces here (since we deleted our request
+                            // but ideally, we would recreate those requests and resend/blacklist the peer).
+                            cur_pieces += 1;
+                            info!("[select loop]: 已存储 {:?}",cur_pieces);
+                            if let Some(peer) = opt_peer {
+                                // Send our have message back to the peer
+                                vec![IPeerManagerMessage::SendMessage(
+                                    peer,
+                                    0,
+                                    PeerWireProtocolMessage::Have(HaveMessage::new(piece as u32)),
+                                )]
+                            } else {
+                                vec![]
+                            }
+                        }
+                        // Decided not to handle these two cases here
+                        SelectState::RemovedPeer(info) => {
+                            panic!("Peer {:?} \n----------Got Disconnected", info)
+                        }
+                        SelectState::BadPiece(_) => panic!("Peer Gave Us Bad Piece"),
+                        _ => vec![],
+                    };
 
+                    // Need a type annotation of this return type, provide that
+                    let result: Box<dyn Future<Item = Loop<_, _>, Error = ()> + Send> =
 
-        // Need a type annotation of this return type, provide that
-        info!("[select loop]: total_pieces {:?} cur_pieces {:?}",total_pieces,cur_pieces);
-        if cur_pieces == total_pieces {
-            // We have all of the (unique) pieces required for our torrent
-            break;
-        }
+                    if cur_pieces == total_pieces {
+                        // We have all of the (unique) pieces required for our torrent
+                        Box::new(future::ok(Loop::Break(())))
 
+                    } else if let Some(peer) = opt_peer {
+                        // We have peer contact info, if we are unchoked, see if we can queue up more requests
+                        let next_piece_requests =
+                            if unchoked {
+                                let take_blocks = cmp::min(MAX_PENDING_BLOCKS - blocks_pending, piece_requests.len());
+                                blocks_pending += take_blocks;
 
-        if let Some(peer) = opt_peer {
-            // We have peer contact info, if we are unchoked, see if we can queue up more requests
-            let mut next_piece_requests =  vec![];
+                                piece_requests
+                                    .drain(0..take_blocks)
+                                    .map(move |item| {
+                                        Ok::<_, ()>(IPeerManagerMessage::SendMessage(
+                                            peer,
+                                            0,
+                                            PeerWireProtocolMessage::Request(item),
+                                        ))
+                                    })
+                                    .collect()
+                            } else {
+                                vec![]
+                            };
 
-            if unchoked {
+                        // First, send any control messages, then, send any more piece requests
+                        Box::new(
+                            map_peer_manager_send
+                                .send_all(stream::iter(send_messages.into_iter().map(Ok::<_, ()>)))
+                                .map_err(|_| ())
+                                .and_then(|(map_peer_manager_send, _)| {
+                                    map_peer_manager_send
+                                        .send_all(stream::iter(next_piece_requests))
+                                })
+                                .map_err(|_| ())
+                                .map(move |(map_peer_manager_send, _)| {
+                                    Loop::Continue((
+                                        select_recv,
+                                        map_peer_manager_send,
+                                        piece_requests,
+                                        opt_peer,
+                                        unchoked,
+                                        blocks_pending,
+                                        cur_pieces,
+                                        total_pieces,
+                                    ))
+                                }),
+                        )
+                    } else {
+                        // Not done yet, and we dont have any peer info stored (havent received the peer yet)
+                        Box::new(future::ok(Loop::Continue((
+                            select_recv,
+                            map_peer_manager_send,
+                            piece_requests,
+                            opt_peer,
+                            unchoked,
+                            blocks_pending,
+                            cur_pieces,
+                            total_pieces,
+                        ))))
+                    };
 
-                let take_blocks = cmp::min(MAX_PENDING_BLOCKS - blocks_pending, piece_requests.len());
+                    result
+                })
+        },
+    ));
 
-                blocks_pending += take_blocks;
-
-                next_piece_requests = piece_requests
-                                      .drain(0..take_blocks)
-                                      .map(move |item| {
-                                            IPeerManagerMessage::SendMessage(
-                                                peer,
-                                                0,
-                                                PeerWireProtocolMessage::Request(item),
-                                            )
-                                      })
-                                      .collect();
-
-            }
-
-
-            // First, send any control messages, then, send any more piece requests
-            for msg in send_messages.into_iter(){
-                info!("[select loop] send msg to peer: {:?}\n", &msg);
-                peer_manager_send.send(msg);
-            }
-
-            for msg in next_piece_requests.into_iter(){
-                info!("[select loop] send request : {:?}\n", &msg);
-                peer_manager_send.send(msg);
-            }
-
-        }
-    }
-
+    result.unwrap();
     info!("下载: 下载完成");
 }
 
