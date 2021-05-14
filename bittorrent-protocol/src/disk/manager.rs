@@ -144,28 +144,15 @@ where
     type SinkError = ();
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        info!("Starting Send For DiskManagerSink With IDiskMessage");
-
-        if self.try_submit_work() {
-            info!("DiskManagerSink Submitted Work On First Attempt");
-            tasks::execute_on_pool(item, &self.pool, self.context.clone());
-
-            return Ok(AsyncSink::Ready);
-        }
-
-        // We split the sink and stream, which means these could be polled in different event loops (I think),
-        // so we need to add our task, but then try to sumbit work again, in case the receiver processed work
-        // right after we tried to submit the first time.
-        info!("DiskManagerSink Failed To Submit Work On First Attempt, Adding Task To Queue");
-        self.task_queue.push(task::current());
-
         if self.try_submit_work() {
             // Receiver will look at the queue but wake us up, even though we dont need it to now...
-            info!("DiskManagerSink Submitted Work On Second Attempt");
+            info!("DiskManagerSink Submitted Work On Attempt");
             tasks::execute_on_pool(item, &self.pool, self.context.clone());
-
             return Ok(AsyncSink::Ready);
         } else {
+            info!("DiskManagerSink Failed To Submit Work, Adding Task To Queue");
+            self.task_queue.push(task::current());
+
             // Receiver will look at the queue eventually...
             Ok(AsyncSink::NotReady(item))
         }
@@ -222,14 +209,14 @@ impl Stream for DiskManagerStream {
             | res @ Ok(Async::Ready(Some(ODiskMessage::BlockLoaded(_))))
             | res @ Ok(Async::Ready(Some(ODiskMessage::BlockProcessed(_)))) => {
                 self.complete_work();
-
-                info!("Notifying DiskManager That We Can Submit More Work");
-                loop {
-                    match self.task_queue.pop() {
-                        Some(task) => task.notify(),
-                        None => {
-                            break;
-                        }
+                debug!("Notifying DiskManager That We Can Submit More Work");
+                match self.task_queue.pop() {
+                    Some(task) => {
+                        task.notify();
+                        debug!("Notifying Task");
+                    },
+                    None => {
+                        debug!("No Task");
                     }
                 }
 
