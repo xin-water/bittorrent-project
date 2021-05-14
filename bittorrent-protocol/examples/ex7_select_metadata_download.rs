@@ -17,8 +17,6 @@ use std::time::Duration;
 use futures::future::{self, Either, Loop};
 use futures::sink::Wait;
 use futures::{Future, Sink, Stream};
-//use tokio::runtime::current_thread::{Runtime, Handle};
-//use tokio::io::AsyncRead;
 use tokio_core::reactor::{Core,Handle};
 use tokio_io::AsyncRead;
 
