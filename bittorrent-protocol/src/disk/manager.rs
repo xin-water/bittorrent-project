@@ -56,37 +56,6 @@ impl<F> DiskManager<F> {
     }
 }
 
-impl<F> Sink<IDiskMessage> for DiskManager<F>
-where
-    F: FileSystem + Send + Sync + 'static,
-{
-    type Error = ();
-
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.sink).poll_ready(cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
-        Pin::new(&mut self.sink).start_send(item)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.sink).poll_flush(cx)
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.sink).poll_close(cx)
-    }
-}
-
-impl<F> Stream for DiskManager<F> {
-    type Item = ODiskMessage;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.stream).poll_next(cx)
-    }
-}
-
 //----------------------------------------------------------------------------//
 
 /// `DiskManagerSink` which is the sink portion of a `DiskManager`.

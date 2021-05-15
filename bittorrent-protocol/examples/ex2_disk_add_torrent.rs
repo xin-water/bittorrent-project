@@ -45,7 +45,7 @@ async fn main() {
     let total_pieces = metainfo_file.info().pieces().count();
 
     println!("{:?}: start send msg ", Local::now().naive_local());
-    disk_send.send(IDiskMessage::AddTorrent(metainfo_file)).await;
+    let _= disk_send.send(IDiskMessage::AddTorrent(metainfo_file)).await;
     println!("{:?}: end send msg ", Local::now().naive_local());
 
     let mut good_pieces = 0;
