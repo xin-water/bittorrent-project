@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate tokio;
+
 use std::fs::File;
 use std::io::{self, BufRead, Read, Write};
 use chrono::Local;
@@ -11,8 +14,11 @@ use tokio::runtime::Runtime;
 use bittorrent_protocol::metainfo::Metainfo;
 use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{DiskManager,DiskManagerBuilder, IDiskMessage, ODiskMessage};
+use std::task::Poll;
+use std::pin::Pin;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     CombinedLogger::init(
         vec![
             TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
@@ -39,28 +45,28 @@ fn main() {
     let total_pieces = metainfo_file.info().pieces().count();
 
     println!("{:?}: start send msg ", Local::now().naive_local());
-    disk_send.send(IDiskMessage::AddTorrent(metainfo_file));
+    disk_send.send(IDiskMessage::AddTorrent(metainfo_file)).await;
     println!("{:?}: end send msg ", Local::now().naive_local());
 
     let mut good_pieces = 0;
 
-    loop {
-        let recv_msg = disk_recv.next();
-        match recv_msg.unwrap() {
+    while let Some(msg) = disk_recv.next().await {
+
+         match msg {
             ODiskMessage::FoundGoodPiece(_, _) => {
                 good_pieces += 1;
                 debug!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
-            }
+             }
             ODiskMessage::TorrentAdded(hash) => {
                 println!();
                 debug!("Torrent With Hash {:?} Successfully Added", hash);
                 debug!(
                     "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
-                    good_pieces, total_pieces
-                );
-                break;
-            }
+                     good_pieces, total_pieces
+                 );
+                 break;
+             }
             unexpected @ _ => panic!("Unexpected ODiskMessage {:?}", unexpected),
-        }
+         }
     }
 }

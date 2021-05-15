@@ -62,12 +62,12 @@ where
 {
     type Error = ();
 
-    fn start_send(mut self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
-        Pin::new(&mut self.sink).start_send(item)
-    }
-
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.sink).poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
+        Pin::new(&mut self.sink).start_send(item)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -136,42 +136,27 @@ impl<F> DiskManagerSink<F> {
     }
 }
 
+
 impl<F> Sink<IDiskMessage> for DiskManagerSink<F>
 where
     F: FileSystem + Send + Sync + 'static,
 {
     type Error = ();
 
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
     fn start_send(self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
-        info!("Starting Send For DiskManagerSink With IDiskMessage");
 
         if self.try_submit_work() {
             info!("DiskManagerSink Submitted Work On First Attempt");
             tasks::execute_on_pool(item, self.pool.clone(), self.context.clone());
-
             return Ok(());
-        }
-
-        // We split the sink and stream, which means these could be polled in different event loops (I think),
-        // so we need to add our task, but then try to sumbit work again, in case the receiver processed work
-        // right after we tried to submit the first time.
-        info!("DiskManagerSink Failed To Submit Work On First Attempt, Adding Task To Queue");
-        //self.task_queue.push(task::current());
-
-        if self.try_submit_work() {
-            // Receiver will look at the queue but wake us up, even though we dont need it to now...
-            info!("DiskManagerSink Submitted Work On Attempt");
-            tasks::execute_on_pool(item, self.pool.clone(), self.context.clone());
-            return Ok(());
-        } else {
+        }else {
             info!("DiskManagerSink Submitted Work fail");
             Err(())
-            // Ok(AsyncSink::NotReady(item))
         }
-    }
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
