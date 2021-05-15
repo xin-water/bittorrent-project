@@ -16,6 +16,7 @@ use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{DiskManager,DiskManagerBuilder, IDiskMessage, ODiskMessage};
 use std::task::Poll;
 use std::pin::Pin;
+use hex;
 
 #[tokio::main]
 async fn main() {
@@ -58,9 +59,8 @@ async fn main() {
                 debug!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
              }
             ODiskMessage::TorrentAdded(hash) => {
-                println!();
-                debug!("Torrent With Hash {:?} Successfully Added", hash);
-                debug!(
+                info!("Torrent With Hash {:?} Successfully Added", hex::encode(hash));
+                info!(
                     "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
                      good_pieces, total_pieces
                  );

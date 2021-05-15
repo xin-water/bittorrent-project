@@ -5,7 +5,6 @@ use crate::disk::{Block, BlockMut, FileSystem, IDiskMessage, ODiskMessage};
 use crate::metainfo::Metainfo;
 use crate::util::bt::InfoHash;
 use std::sync::mpsc::Sender;
-use threadpool::ThreadPool;
 pub mod context;
 use self::context::DiskManagerContext;
 
@@ -14,11 +13,11 @@ use self::helpers::piece_accessor::PieceAccessor;
 use self::helpers::piece_checker::{PieceChecker, PieceCheckerState, PieceState};
 use std::sync::Arc;
 
-pub fn execute_on_pool<F>(msg: IDiskMessage, pool: ThreadPool, context: DiskManagerContext<F>)
+pub fn execute_on_pool<F>(msg: IDiskMessage, context: DiskManagerContext<F>)
 where
     F: FileSystem + Send + Sync + 'static,
 {
-    pool.execute(move || {
+    tokio::spawn(async move {
         let mut blocking_sender = context.blocking_sender();
 
         let out_msg = match msg {
