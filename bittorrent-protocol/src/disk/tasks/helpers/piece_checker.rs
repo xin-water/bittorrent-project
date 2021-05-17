@@ -181,7 +181,7 @@ pub struct PieceCheckerState {
     last_block_size: usize,
 }
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash,Clone)]
 pub enum PieceState {
     /// Piece was discovered as good.
     Good(u64),
@@ -213,10 +213,10 @@ impl PieceCheckerState {
     /// then either be dropped (NewBad) or converted to OldGood (NewGood).
     pub fn run_with_diff<F>(&mut self, mut callback: F)
     where
-        F: FnMut(&PieceState),
+        F: Fn(PieceState),
     {
         for piece_state in self.new_states.drain(..) {
-            callback(&piece_state);
+            callback(piece_state.clone());
 
             self.old_states.insert(piece_state);
         }

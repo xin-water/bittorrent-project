@@ -208,11 +208,11 @@ fn send_piece_diff(
     blocking_sender: Sender<ODiskMessage>,
     ignore_bad: bool,
 ) {
-    checker_state.run_with_diff(|piece_state| {
+    checker_state.run_with_diff(move |piece_state| {
         let opt_out_msg = match (piece_state, ignore_bad) {
-            (&PieceState::Good(index), _) => Some(ODiskMessage::FoundGoodPiece(hash, index)),
-            (&PieceState::Bad(index), false) => Some(ODiskMessage::FoundBadPiece(hash, index)),
-            (&PieceState::Bad(_), true) => None,
+            (PieceState::Good(index), _) => Some(ODiskMessage::FoundGoodPiece(hash, index)),
+            (PieceState::Bad(index), false) => Some(ODiskMessage::FoundBadPiece(hash, index)),
+            (PieceState::Bad(_), true) => None,
         };
 
         if let Some(out_msg) = opt_out_msg {
