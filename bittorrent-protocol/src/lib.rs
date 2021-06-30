@@ -16,19 +16,19 @@ pub mod util;
 
 #[macro_use]
 pub mod bencode;
-pub mod metainfo;
-pub mod magnet;
 pub mod disk;
+pub mod magnet;
+pub mod metainfo;
 
-pub mod lpd;
-pub mod htracker;
-pub mod utracker;
 pub mod dht;
+pub mod htracker;
+pub mod lsd;
+pub mod utracker;
 
-pub mod utp;
 pub mod handshake;
 pub mod peer;
 pub mod select;
+pub mod utp;
 
 #[cfg(test)]
 mod tests {
