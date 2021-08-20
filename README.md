@@ -24,7 +24,7 @@ bittorrent-protocol：Implementation of BT protocol library.
 
     Peer discovery component:
   
-         LPD: local discovery support.
+         LSD: local server discovery support.
 
          Httracker: http tracker server and client code.
 

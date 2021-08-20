@@ -29,7 +29,7 @@ pub mod metainfo;
 pub mod magnet;
 pub mod disk;
 
-pub mod lpd;
+pub mod lsd;
 pub mod htracker;
 pub mod utracker;
 pub mod dht;
