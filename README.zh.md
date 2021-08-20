@@ -23,7 +23,7 @@ bittorrent-protocol：BT协议库实现。
 
         对等点发现组件：
 
-            lpd：本地发现支持。
+            lsd：本地服务发现支持。
 
             htracker：http tracker 服务器与客户端代码。
 
