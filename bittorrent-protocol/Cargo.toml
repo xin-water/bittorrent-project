@@ -12,8 +12,7 @@ license     = "LGPL3"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log             = "0.3.0"
-simplelog       = "0.10.0"
+log             = { version = "0.4.0", features = ["std"] }
 chrono          = "0.4"
 num             = "0.1.0"
 nom             = "3.0"
@@ -42,6 +41,7 @@ tokio-codec     = "0.1"
 
 [dev-dependencies]
 futures-test    = { git = "https://github.com/carllerche/better-future.git" }
+log4rs          = "1.0.0"
 clap            = "2.33"
 hex             = "0.3"
 pendulum        = "0.3"

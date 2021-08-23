@@ -1,24 +1,53 @@
-#[macro_use]
-extern crate log;
-
 use bittorrent_protocol::dht::{DhtBuilder, Handshaker, Router};
 use bittorrent_protocol::util::bt::{InfoHash, PeerId};
-use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
-use simplelog::*;
+use log::{debug, info, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Logger, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use std::collections::HashSet;
 use std::io::{self, Read};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::thread::{self};
 use std::fs::File;
 
-fn main() {
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
 
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]
-    ).unwrap();
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "[File] {d} - {l} - {t} - {m}{n}",
+        )))
+        .build("log/log.log")
+        .unwrap();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .appender("file")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    let _ = log4rs::init_config(config).unwrap();
+}
+
+fn main() {
+    init_log();
+    info!("start run .......");
 
     let handshaker = SimpleHandshaker {
         filter: HashSet::new(),
