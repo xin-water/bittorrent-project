@@ -48,7 +48,7 @@ impl<'a> Iterator for BitIterator<'a> {
 impl<'a> ExactSizeIterator for BitIterator<'a> {}
 
 #[test]
-async fn test_iterator() {
+fn test_iterator() {
     let bytes = vec![0xCA, 0xFE];
     let expected_bits = vec![0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1];
 

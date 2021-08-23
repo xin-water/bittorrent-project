@@ -15,7 +15,6 @@ extern crate quickcheck;
 #[macro_use]
 extern crate futures;
 
-#[macro_use]
 extern crate tokio;
 
 pub mod util;

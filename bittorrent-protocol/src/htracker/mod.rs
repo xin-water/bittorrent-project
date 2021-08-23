@@ -1,2 +1,2 @@
 #[test]
-async fn it_works() {}
+fn it_works() {}

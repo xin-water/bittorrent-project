@@ -1305,7 +1305,6 @@ mod test {
     use crate::utp::socket::{UtpSocket, UtpListener, SocketState, BUF_SIZE, take_address};
     use crate::utp::packet::*;
     use crate::utp::time::now_microseconds;
-    use crate::utp::socket::SocketState;
 
     macro_rules! iotry {
         ($e:expr) => (match $e { Ok(e) => e, Err(e) => panic!("{:?}", e) })

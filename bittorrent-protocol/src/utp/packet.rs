@@ -498,7 +498,7 @@ mod tests {
     use crate::utp::packet::{ExtensionType, Extension, Packet, PacketType, HEADER_SIZE, TryFrom, check_extensions};
     use crate::utp::packet::PacketType::{State, Data};
     use crate::utp::time::{Timestamp, Delay};
-    use super::super::quickcheck::TestResult;
+    use crate::quickcheck::TestResult;
 
     #[test]
     fn test_packet_decode() {
