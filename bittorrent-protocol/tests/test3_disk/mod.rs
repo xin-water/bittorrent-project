@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use bytes::BytesMut;
 use rand::Rng;
+use futures::SinkExt;
 
 use bittorrent_protocol::disk::{
     BlockMetadata, BlockMut, DiskManagerSink, DiskManagerStream, FileSystem, IDiskMessage,
@@ -46,9 +47,12 @@ fn send_block<F, M>(
 
     modify(&mut block[..]);
 
-    blocking_send
-        .send(IDiskMessage::ProcessBlock(block.into()))
-        .unwrap_or_else(|_| panic!("Failed To Send Process Block Message"));
+    let message = IDiskMessage::ProcessBlock(block.into());
+
+    tokio::spawn(async move{
+          blocking_send.send(message).await
+         }
+    );
 }
 
 //----------------------------------------------------------------------------//

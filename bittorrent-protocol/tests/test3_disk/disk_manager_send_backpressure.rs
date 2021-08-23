@@ -1,9 +1,11 @@
+use futures::{SinkExt, StreamExt};
+use tokio::test;
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage};
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 
 #[test]
-fn positive_disk_manager_send_backpressure() {
+async fn positive_disk_manager_send_backpressure() {
     // Create some "files" as random bytes
     let data_a = (super::random_buffer(50), "/path/to/file/a".into());
     let data_b = (super::random_buffer(2000), "/path/to/file/b".into());

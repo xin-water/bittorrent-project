@@ -1,9 +1,12 @@
+use futures::{SinkExt, StreamExt};
+use tokio::test;
+
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage};
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 
 #[test]
-fn positive_add_torrent() {
+async fn positive_add_torrent() {
     // Create some "files" as random bytes
     let data_a = (super::random_buffer(50), "/path/to/file/a".into());
     let data_b = (super::random_buffer(2000), "/path/to/file/b".into());
@@ -25,13 +28,16 @@ fn positive_add_torrent() {
     let disk_manager = DiskManagerBuilder::new().build(filesystem.clone());
 
     let (mut send, mut recv) = disk_manager.into_parts();
-    send.send(IDiskMessage::AddTorrent(metainfo_file)).unwrap();
+    tokio::spawn(async move {
+         send.send(IDiskMessage::AddTorrent(metainfo_file)).await
+        }
+    );
 
     let good_pieces = 0;
 
     // Run a core loop until we get the TorrentAdded message
     loop {
-        let msg = recv.next().unwrap();
+        let msg = recv.next().await.unwrap();
 
         match msg {
             ODiskMessage::TorrentAdded(_) => break,

@@ -1,9 +1,11 @@
+use futures::{SinkExt, StreamExt};
+use tokio::test;
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{DiskManagerBuilder, IDiskMessage, ODiskMessage};
 use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 
 #[test]
-fn positive_complete_torrent() {
+async fn positive_complete_torrent() {
     // Create some "files" as random bytes
     let data_a = (super::random_buffer(1023), "/path/to/file/a".into());
     let data_b = (super::random_buffer(2000), "/path/to/file/b".into());

@@ -1,3 +1,5 @@
+use futures::{SinkExt, StreamExt};
+use tokio::test;
 use super::{InMemoryFileSystem, MultiFileDirectAccessor};
 use bittorrent_protocol::disk::{
     Block, BlockMetadata, DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage,
@@ -6,7 +8,7 @@ use bittorrent_protocol::metainfo::{Metainfo, MetainfoBuilder, PieceLength};
 use bytes::BytesMut;
 
 #[test]
-fn positive_process_block() {
+async fn positive_process_block() {
     // Create some "files" as random bytes
     let data_a = (super::random_buffer(1023), "/path/to/file/a".into());
     let data_b = (super::random_buffer(2000), "/path/to/file/b".into());

@@ -1,3 +1,5 @@
+use futures::{SinkExt, StreamExt};
+use tokio::test;
 use bytes::BytesMut;
 use rand::{self, Rng};
 use std::fs;
@@ -137,7 +139,7 @@ fn bench_process_file_with_fs<F>(
 }
 
 #[test]
-fn bench_native_fs_1_mb_pieces_128_kb_blocks() {
+async fn bench_native_fs_1_mb_pieces_128_kb_blocks() {
     let piece_length = 1 * 1024 * 1024;
     let block_length = 128 * 1024;
     let file_length = 2 * 1024 * 1024;
@@ -152,7 +154,7 @@ fn bench_native_fs_1_mb_pieces_128_kb_blocks() {
 }
 
 #[test]
-fn bench_native_fs_1_mb_pieces_16_kb_blocks() {
+async fn bench_native_fs_1_mb_pieces_16_kb_blocks() {
     let piece_length = 1 * 1024 * 1024;
     let block_length = 16 * 1024;
     let file_length = 2 * 1024 * 1024;
@@ -167,7 +169,7 @@ fn bench_native_fs_1_mb_pieces_16_kb_blocks() {
 }
 
 #[test]
-fn bench_native_fs_1_mb_pieces_2_kb_blocks() {
+async fn bench_native_fs_1_mb_pieces_2_kb_blocks() {
     let piece_length = 1 * 1024 * 1024;
     let block_length = 2 * 1024;
     let file_length = 2 * 1024 * 1024;
@@ -182,7 +184,7 @@ fn bench_native_fs_1_mb_pieces_2_kb_blocks() {
 }
 
 #[test]
-fn bench_file_handle_cache_fs_1_mb_pieces_128_kb_blocks() {
+async fn bench_file_handle_cache_fs_1_mb_pieces_128_kb_blocks() {
     let piece_length = 1 * 1024 * 1024;
     let block_length = 128 * 1024;
     let file_length = 2 * 1024 * 1024;
@@ -197,7 +199,7 @@ fn bench_file_handle_cache_fs_1_mb_pieces_128_kb_blocks() {
 }
 
 #[test]
-fn bench_file_handle_cache_fs_1_mb_pieces_16_kb_blocks() {
+async fn bench_file_handle_cache_fs_1_mb_pieces_16_kb_blocks() {
     let piece_length = 1 * 1024 * 1024;
     let block_length = 16 * 1024;
     let file_length = 2 * 1024 * 1024;
@@ -212,7 +214,7 @@ fn bench_file_handle_cache_fs_1_mb_pieces_16_kb_blocks() {
 }
 
 #[test]
-fn bench_file_handle_cache_fs_1_mb_pieces_2_kb_blocks() {
+async fn bench_file_handle_cache_fs_1_mb_pieces_2_kb_blocks() {
     let piece_length = 1 * 1024 * 1024;
     let block_length = 2 * 1024;
     let file_length = 2 * 1024 * 1024;
