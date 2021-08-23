@@ -1,5 +1,3 @@
-#[macro_use]
-extern crate log;
 
 #[macro_use]
 extern crate clap;
@@ -18,8 +16,16 @@ use tokio_io::AsyncRead;
 
 use std::sync::{Arc,Mutex};
 use chrono::Local;
-use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
-use simplelog::*;
+use log::{debug, info, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Logger, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use bittorrent_protocol::metainfo::{Info, Metainfo};
 use bittorrent_protocol::util::bt::PeerId;
 
@@ -38,6 +44,35 @@ use bittorrent_protocol::disk::NativeFileSystem;
 use bittorrent_protocol::disk::{
     Block, BlockMetadata, BlockMut, DiskManagerBuilder, IDiskMessage, ODiskMessage,
 };
+
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
+
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "[File] {d} - {l} - {t} - {m}{n}",
+        )))
+        .build("log/log.log")
+        .unwrap();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .appender("file")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    let _ = log4rs::init_config(config).unwrap();
+}
 
 /*
     Things this example doesnt do, because of the lack of bittorrent_protocol_select:
@@ -75,12 +110,9 @@ enum SelectState {
 
 fn main() {
 
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]
-    ).unwrap();
+    // Start logger
+    init_log();
+    info!("start run .......");
 
     // Command line argument parsing
     let matches = clap_app!(myapp =>
