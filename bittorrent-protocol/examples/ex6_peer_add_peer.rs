@@ -1,3 +1,13 @@
+use log::{debug, info, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Logger, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use std::io;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr, TcpListener, TcpStream};
 
@@ -9,7 +19,40 @@ use bittorrent_protocol::peer::{
 
 use bittorrent_protocol::util::bt;
 
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
+
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "[File] {d} - {l} - {t} - {m}{n}",
+        )))
+        .build("log/log.log")
+        .unwrap();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .appender("file")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    let _ = log4rs::init_config(config).unwrap();
+}
+
 fn main() {
+
+    // Start logger
+    init_log();
+    info!("start run .......");
 
     let mut manager = PeerManagerBuilder::new()
         .with_peer_capacity(1)
@@ -48,7 +91,7 @@ fn main() {
 
     match response {
         OPeerManagerMessage::PeerAdded(info) => {
-            println!("PeerAdded\n1: {:?} \n=\n2: {:?}\n", peer_one_info, info)
+            info!("PeerAdded\n1: {:?} \n=\n2: {:?}\n", peer_one_info, info)
         }
         _ => panic!("Unexpected First Peer Manager Response"),
     };
@@ -63,7 +106,7 @@ fn main() {
 
     match response {
         OPeerManagerMessage::PeerRemoved(info) => {
-            println!("PeerRemoved\n1: {:?} \n=\n2: {:?}\n", peer_one_info, info)
+            info!("PeerRemoved\n1: {:?} \n=\n2: {:?}\n", peer_one_info, info)
         }
 
         _ => panic!("Unexpected Third Peer Manager Response"),
@@ -77,7 +120,7 @@ fn main() {
 
     match response {
         OPeerManagerMessage::PeerAdded(info) => {
-            println!("PeerAdded\n1: {:?} \n=\n2: {:?}\n", peer_two_info, info)
+            info!("PeerAdded\n1: {:?} \n=\n2: {:?}\n", peer_two_info, info)
         }
 
         _ => panic!("Unexpected Fourth Peer Manager Response"),

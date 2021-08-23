@@ -6,7 +6,7 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 
-use log::LogLevel;
+use log::Level;
 use mio::{self, EventLoop, Handler};
 
 // use crate::bencode::Bencode;
@@ -705,7 +705,7 @@ fn handle_incoming<H>(
                 );
             }
 
-            if log_enabled!(LogLevel::Info) {
+            if log_enabled!(Level::Info) {
                 let mut total = 0;
 
                 for (index, bucket) in work_storage.routing_table.buckets().enumerate() {

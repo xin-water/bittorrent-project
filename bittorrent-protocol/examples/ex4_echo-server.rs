@@ -1,10 +1,46 @@
-#[macro_use]
-extern crate log;
 
-use simplelog::*;
+use log::{debug, info, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Logger, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use bittorrent_protocol::utp::{UtpListener, UtpSocket};
 use std::thread;
 use std::fs::File;
+
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
+
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "[File] {d} - {l} - {t} - {m}{n}",
+        )))
+        .build("log/log.log")
+        .unwrap();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .appender("file")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    let _ = log4rs::init_config(config).unwrap();
+}
 
 fn handle_client(mut s: UtpSocket) {
     let mut buf = [0; 1500];
@@ -28,12 +64,8 @@ fn handle_client(mut s: UtpSocket) {
 
 fn main() {
     // Start logger
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]
-    ).unwrap();
+    init_log();
+    info!("start run .......");
 
     // Create a listener
     let addr = "127.0.0.1:8080";

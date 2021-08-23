@@ -121,7 +121,7 @@ pub fn run_peer<S>(
             let result = match result {
                 Ok((opt_ack, is_good)) => {
                     if let Some(o_peer_manager_msg) = opt_ack {
-                        o_send.send(o_peer_manager_msg).unwrap();
+                        let _= o_send.send(o_peer_manager_msg);
                         Ok(is_good)
                     } else {
                         // Either we had no recv message (from remote), or it was a keep alive message, which we dont propagate

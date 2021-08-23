@@ -1,13 +1,48 @@
 //! Implementation of a simple uTP client and server.
-#[macro_use]
-extern crate log;
-use simplelog::*;
+use log::{debug, info, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Logger, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use std::fs::File;
 
 use std::process;
 use bittorrent_protocol::utp::UtpStream;
 use std::io::{stdin, stdout, stderr, Read, Write};
 
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
+
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "[File] {d} - {l} - {t} - {m}{n}",
+        )))
+        .build("log/log.log")
+        .unwrap();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .appender("file")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    let _ = log4rs::init_config(config).unwrap();
+}
 
 fn usage() -> ! {
     println!("Usage: ex4_utpcat [-s|-c] <address> <port>");
@@ -16,18 +51,13 @@ fn usage() -> ! {
 
 fn main() {
 
+    init_log();
+    info!("start run .......");
 
     // This example may run in either server or client mode.
     // Using an enum tends to make the code cleaner and easier to read.
     enum Mode {Server, Client}
 
-    // Start logging
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]
-    ).unwrap();
 
     // Fetch arguments
     let mut args = std::env::args();
