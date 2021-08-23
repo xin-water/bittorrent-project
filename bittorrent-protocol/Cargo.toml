@@ -13,7 +13,6 @@ license     = "LGPL3"
 
 [dependencies]
 log             = { version = "0.4.0", features = ["std"] }
-simplelog       = "0.10.0"
 chrono          = "0.4"
 num             = "0.1.0"
 nom             = "3.0"
@@ -37,6 +36,7 @@ num-traits      = "0.1"
 quickcheck      = "0.4"
 
 [dev-dependencies]
+log4rs          = "1.0.0"
 clap            = "2.33"
 hex             = "0.3"
 pendulum        = "0.3"
