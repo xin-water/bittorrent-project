@@ -1,5 +1,3 @@
-#[macro_use]
-extern crate log;
 
 #[macro_use]
 extern crate tokio;
@@ -7,8 +5,16 @@ extern crate tokio;
 use std::fs::File;
 use std::io::{self, BufRead, Read, Write};
 use chrono::Local;
-use log::{debug, error, log_enabled, info};
-use simplelog::*;
+use log::{debug, info, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Logger, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use futures::{Future, Sink, SinkExt, Stream, StreamExt};
 use tokio::runtime::Runtime;
 use bittorrent_protocol::metainfo::Metainfo;
@@ -18,14 +24,39 @@ use std::task::Poll;
 use std::pin::Pin;
 use hex;
 
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
+
+    let file = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(
+            "[File] {d} - {l} - {t} - {m}{n}",
+        )))
+        .build("log/log.log")
+        .unwrap();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .appender(Appender::builder().build("file", Box::new(file)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .appender("file")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    let _ = log4rs::init_config(config).unwrap();
+}
+
 #[tokio::main]
 async fn main() {
-    CombinedLogger::init(
-        vec![
-            TermLogger::new(LevelFilter::Info, Config::default(), TerminalMode::Mixed,ColorChoice::Auto),
-            WriteLogger::new(LevelFilter::Debug, Config::default(), File::create("my_rust_binary.log").unwrap()),
-        ]
-    ).unwrap();
+    init_log();
+    info!("start run .......");
 
     let torrent_path = "bittorrent-protocol/examples_data/torrent/music.torrent";
     let download_path = "bittorrent-protocol/examples_data/download";
