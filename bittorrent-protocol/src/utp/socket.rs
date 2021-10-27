@@ -279,7 +279,7 @@ impl UtpSocket {
         }
 
         let addr = socket.connected_to;
-        let packet = Packet::try_from(&buf[..len])?;
+        let packet = Packet::try_from_type(&buf[..len])?;
         debug!("received {:?}", packet);
         socket.handle_packet(&packet, addr)?;
 
@@ -393,7 +393,7 @@ impl UtpSocket {
         }
 
         // Decode received data into a packet
-        let packet = match Packet::try_from(&b[..read]) {
+        let packet = match Packet::try_from_type(&b[..read]) {
             Ok(packet) => packet,
             Err(e) => {
                 debug!("{}", e);
@@ -1246,7 +1246,7 @@ impl UtpListener {
         let mut buf = [0; BUF_SIZE];
 
         self.socket.recv_from(&mut buf).and_then(|(nread, src)| {
-            let packet = Packet::try_from(&buf[..nread])?;
+            let packet = Packet::try_from_type(&buf[..nread])?;
 
             // Ignore non-SYN packets
             if packet.get_type() != PacketType::Syn {
@@ -1750,7 +1750,7 @@ mod test {
 
         // Receive data
         let data_packet = match server.socket.recv_from(&mut buf) {
-            Ok((read, _src)) => iotry!(Packet::try_from(&buf[..read])),
+            Ok((read, _src)) => iotry!(Packet::try_from_type(&buf[..read])),
             Err(e) => panic!("{}", e),
         };
         assert_eq!(data_packet.get_type(), PacketType::Data);
@@ -1774,7 +1774,7 @@ mod test {
         match server.socket.recv_from(&mut buf) {
             Ok((0, _)) => panic!("Received 0 bytes from socket"),
             Ok((read, _src)) => {
-                let packet = iotry!(Packet::try_from(&buf[..read]));
+                let packet = iotry!(Packet::try_from_type(&buf[..read]));
                 assert_eq!(packet.get_type(), PacketType::Data);
                 assert_eq!(packet.seq_nr(), data_packet.seq_nr());
                 assert_eq!(packet.payload(), data_packet.payload());
@@ -2156,7 +2156,7 @@ mod test {
         let mut buf = [0; BUF_SIZE];
         match client.socket.recv_from(&mut buf) {
             Ok((len, _src)) => {
-                let reply = Packet::try_from(&buf[..len]).ok().unwrap();
+                let reply = Packet::try_from_type(&buf[..len]).ok().unwrap();
                 assert_eq!(reply.get_type(), PacketType::Reset);
             }
             Err(e) => panic!("{:?}", e),
@@ -2361,7 +2361,7 @@ mod test {
             iotry!(socket.recv_from(&mut buf));
             for _ in 0..attempts {
                 match socket.recv_from(&mut buf) {
-                    Ok((len, _src)) => assert_eq!(Packet::try_from(&buf[..len]).unwrap().get_type(),
+                    Ok((len, _src)) => assert_eq!(Packet::try_from_type(&buf[..len]).unwrap().get_type(),
                         PacketType::Data),
                     Err(e) => panic!("{}", e),
                 }
@@ -2404,7 +2404,7 @@ mod test {
             iotry!(socket.recv_from(&mut buf));
             for _ in 0..attempts {
                 match socket.recv_from(&mut buf) {
-                    Ok((len, _src)) => assert_eq!(Packet::try_from(&buf[..len]).unwrap().get_type(),
+                    Ok((len, _src)) => assert_eq!(Packet::try_from_type(&buf[..len]).unwrap().get_type(),
                                                   PacketType::Fin),
                     Err(e) => panic!("{}", e),
                 }
@@ -2444,7 +2444,7 @@ mod test {
             for _ in 0..(3 * attempts) {
                 match socket.recv_from(&mut buf) {
                     Ok((len, _src)) => {
-                        let packet = iotry!(Packet::try_from(&buf[..len]));
+                        let packet = iotry!(Packet::try_from_type(&buf[..len]));
                         assert_eq!(packet.get_type(), PacketType::State);
                         assert_eq!(packet.ack_nr(), seq_nr - 1);
                     }
