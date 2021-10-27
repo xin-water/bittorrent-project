@@ -2,8 +2,9 @@
 name = "bittorrent-client"
 version = "0.1.0"
 authors = ["xinwater <1872407021@qq.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bittorrent-protocol = { path  = "../bittorrent-protocol" , version = "0.3.0-bate" }
