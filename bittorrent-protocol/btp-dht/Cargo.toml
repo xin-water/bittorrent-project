@@ -1,8 +1,17 @@
 [package]
 name = "btp-dht"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+btp-util        = { version="0.1.0", path = "../btp-util" }
+btp-bencode     = { version="0.1.0", path = "../btp-bencode" }
+crc             = "1.2.0"
+rand            = "0.3.0"
+mio             = "0.5.0"
+log             = { version = "0.4.0", features = ["std"] }
+error-chain     = "0.12"
+chrono          = "0.4"
+
