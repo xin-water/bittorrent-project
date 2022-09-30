@@ -1,8 +1,16 @@
 [package]
 name = "btp-utracker"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+btp-util        = { version="0.1.0", path = "../btp-util" }
+nom             = "3.0"
+byteorder       = "1.1"
+chrono          = "0.4"
+umio            = "0.3"
+rand            = "0.3.0"
+
+
