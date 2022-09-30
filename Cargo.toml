@@ -1,7 +1,24 @@
 
 [workspace]
+resolver="2"
 members=[
     "bittorrent-client-demo",
     "bittorrent-client",
     "bittorrent-protocol",
+    "bittorrent-protocol/btp-util",
+
+    "bittorrent-protocol/btp-bencode",
+    "bittorrent-protocol/btp-metainfo",
+    "bittorrent-protocol/btp-magnet",
+    "bittorrent-protocol/btp-disk",
+
+    "bittorrent-protocol/btp-dht",
+    "bittorrent-protocol/btp-htracker",
+    "bittorrent-protocol/btp-utracker",
+    "bittorrent-protocol/btp-lsd",
+
+    "bittorrent-protocol/btp-utp",
+    "bittorrent-protocol/btp-handshake",
+    "bittorrent-protocol/btp-peer",
+    "bittorrent-protocol/btp-select",
 ]
