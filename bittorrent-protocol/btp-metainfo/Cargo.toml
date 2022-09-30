@@ -1,8 +1,19 @@
 [package]
 name = "btp-metainfo"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+btp-util        = { version="0.1.0", path = "../btp-util" }
+btp-bencode     = { version="0.1.0", path = "../btp-bencode" }
+
+num             = "0.1.0"
+rust-crypto     = "0.2.0"
+rand            = "0.3.0"
+walkdir         = "2.0"
+crossbeam       = "0.8"
+error-chain     = "0.12"
+
+
