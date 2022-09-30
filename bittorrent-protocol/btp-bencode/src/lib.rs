@@ -1,14 +1,188 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+//! Library for parsing and converting bencoded data.
+//!
+//! # Examples
+//!
+//! Decoding bencoded data:
+//!
+//! ```rust
+//!
+//!     use std::default::Default;
+//!     use btp_bencode::{BencodeRef, BRefAccess, BDecodeOpt};
+//!
+//!     fn main() {
+//!         let data = b"d12:lucky_numberi7ee";
+//!         let bencode = BencodeRef::decode(data, BDecodeOpt::default()).unwrap();
+//!
+//!         assert_eq!(7, bencode.dict().unwrap().lookup("lucky_number".as_bytes())
+//!             .unwrap().int().unwrap());
+//!     }
+//! ```
+//!
+//! Encoding bencoded data:
+//!
+//! ```rust
+//!
+//!     fn main() {
+//!         let message = (ben_map!{
+//!             "lucky_number" => ben_int!(7),
+//!             "lucky_string" => ben_bytes!("7")
+//!         }).encode();
+//!
+//!         assert_eq!(&b"d12:lucky_numberi7e12:lucky_string1:7e"[..], &message[..]);
+//!     }
+//! ```
+
+mod access;
+pub use access::bencode::{BMutAccess, BRefAccess, BencodeMutKind, BencodeRefKind};
+pub use access::convert::BConvert;
+pub use access::dict::BDictAccess;
+pub use access::list::BListAccess;
+
+mod cow;
+
+mod mutable;
+pub use mutable::bencode_mut::BencodeMut;
+
+mod reference;
+pub use reference::bencode_ref::BencodeRef;
+pub use reference::decode_opt::BDecodeOpt;
+
+mod error;
+pub use error::{BencodeConvertError, BencodeConvertErrorKind, BencodeConvertResult};
+pub use error::{BencodeParseError, BencodeParseErrorKind, BencodeParseResult};
+
+/// Traits for implementation functionality.
+pub mod inner {
+    pub use super::cow::BCowConvert;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Traits for extended functionality.
+pub mod ext {
+    pub use super::access::bencode::BRefAccessExt;
+    pub use super::access::convert::BConvertExt;
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+const BEN_END: u8 = b'e';
+const DICT_START: u8 = b'd';
+const LIST_START: u8 = b'l';
+const INT_START: u8 = b'i';
+
+const BYTE_LEN_LOW: u8 = b'0';
+const BYTE_LEN_HIGH: u8 = b'9';
+const BYTE_LEN_END: u8 = b':';
+
+/// Construct a `BencodeMut` map by supplying string references as keys and `BencodeMut` as values.
+#[macro_export]
+macro_rules!  ben_map {
+( $($key:expr => $val:expr),* ) => {
+        {
+            use btp_bencode::{BMutAccess, BencodeMut};
+            use btp_bencode::inner::BCowConvert;
+
+            let mut bencode_map = BencodeMut::new_dict();
+            {
+                let map = bencode_map.dict_mut().unwrap();
+                $(
+                    map.insert(BCowConvert::convert($key), $val);
+                )*
+            }
+
+            bencode_map
+        }
     }
+}
+#[macro_export]
+macro_rules!  ben_map_self {
+( $($key:expr => $val:expr),* ) => {
+        {
+            use crate::{BMutAccess, BencodeMut};
+            use crate::inner::BCowConvert;
+
+            let mut bencode_map = BencodeMut::new_dict();
+            {
+                let map = bencode_map.dict_mut().unwrap();
+                $(
+                    map.insert(BCowConvert::convert($key), $val);
+                )*
+            }
+
+            bencode_map
+        }
+    }
+}
+
+/// Construct a `BencodeMut` list by supplying a list of `BencodeMut` values.
+#[macro_export]
+macro_rules! ben_list {
+    ( $($ben:expr),* ) => {
+        {
+            use btp_bencode::{BencodeMut, BMutAccess};
+
+            let mut bencode_list = BencodeMut::new_list();
+            {
+                let list = bencode_list.list_mut().unwrap();
+                $(
+                    list.push($ben);
+                )*
+            }
+
+            bencode_list
+        }
+    }
+}
+
+macro_rules! ben_list_self {
+    ( $($ben:expr),* ) => {
+        {
+            use crate::{BencodeMut, BMutAccess};
+
+            let mut bencode_list = BencodeMut::new_list();
+            {
+                let list = bencode_list.list_mut().unwrap();
+                $(
+                    list.push($ben);
+                )*
+            }
+
+            bencode_list
+        }
+    }
+}
+
+/// Construct `BencodeMut` bytes by supplying a type convertible to `Vec<u8>`.
+#[macro_export]
+macro_rules! ben_bytes {
+    ( $ben:expr ) => {{
+        use btp_bencode::inner::BCowConvert;
+        use btp_bencode::BencodeMut;
+
+        BencodeMut::new_bytes(BCowConvert::convert($ben))
+    }};
+}
+
+macro_rules! ben_bytes_self {
+    ( $ben:expr ) => {{
+        use crate::inner::BCowConvert;
+        use crate::BencodeMut;
+
+        BencodeMut::new_bytes(BCowConvert::convert($ben))
+    }};
+}
+
+/// Construct a `BencodeMut` integer by supplying an `i64`.
+#[macro_export]
+macro_rules! ben_int {
+    ( $ben:expr ) => {{
+        use btp_bencode::BencodeMut;
+
+        BencodeMut::new_int($ben)
+    }};
+}
+
+macro_rules! ben_int_self {
+    ( $ben:expr ) => {{
+        use crate::BencodeMut;
+
+        BencodeMut::new_int($ben)
+    }};
 }
