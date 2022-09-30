@@ -27,7 +27,7 @@ pub use self::handshake::DhtDiscoveryInfo;
 pub use self::handshake::Handshaker;
 
 #[macro_use]
-mod bencode;
+pub mod bencode;
 
 mod builder;
 pub use builder::{DhtBuilder, MainlineDht};

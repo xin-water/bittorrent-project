@@ -7,7 +7,7 @@
 //! ```rust
 //!
 //!
-//!     use bittorrent_protocol_bencode::{Bencode};
+//!     use btp_dht::bencode::{Bencode};
 //!
 //!     fn main() {
 //!         let data = b"d12:lucky_numberi7ee";
@@ -22,7 +22,7 @@
 //!
 //! ```rust
 //!
-//!     use bittorrent_protocol_bencode::{Bencode};
+//!     use btp_dht::bencode::{Bencode};
 //!
 //!     fn main() {
 //!         let message = (ben_map!{
