@@ -1,8 +1,20 @@
 [package]
 name = "btp-disk"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+btp-util        = { version="0.1.0", path = "../btp-util" }
+btp-metainfo    = { version="0.1.0", path = "../btp-metainfo" }
+bytes           = "0.4"
+threadpool      = "1.0"
+futures         = "0.3"
+log             = { version = "0.4.0", features = ["std"] }
+error-chain     = "0.12"
+tokio           = { version = "1.0", features = ["full"] }
+lru-cache       = "0.1"
+
+
+
