@@ -1,17 +1,19 @@
 use btp_dht::{DhtBuilder, Handshaker, Router};
 use btp_util::bt::{InfoHash, PeerId};
-use log::{LogLevel, LogLevelFilter, LogMetadata, LogRecord};
+use log::{info, LevelFilter};
 use std::collections::HashSet;
 use std::io::{self, Read};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::thread::{self};
+use log4rs::append::console::{ConsoleAppender, Target};
+use log4rs::Config;
+use log4rs::config::{Appender, Root};
+use log4rs::encode::pattern::PatternEncoder;
 
 fn main() {
-    log::set_logger(|m| {
-        m.set(LogLevelFilter::max());
-        Box::new(SimpleLogger)
-    })
-    .unwrap();
+    // Start logger
+    init_log();
+    info!("start run .......");
 
     let handshaker = SimpleHandshaker {
         filter: HashSet::new(),
@@ -35,7 +37,8 @@ fn main() {
     });
 
     // let hash = InfoHash::from_bytes(b"My Unique Info Hash");
-    let hash = InfoHash::from_bytes(b"d1101a2b9d202811a05e8c57c557a20bf974dc8a");
+    //  ubuntu-22.04.1-desktop-amd64.iso  is  3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0
+    let hash = InfoHash::from_bytes(b"3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
 
     // Let the user announce or search on our info hash
     let stdin = io::stdin();
@@ -91,16 +94,22 @@ impl Handshaker for SimpleHandshaker {
     }
 }
 
-struct SimpleLogger;
+fn init_log() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new(
+            "[Console] {d} - {l} -{t} - {m}{n}",
+        )))
+        .build();
 
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &LogMetadata) -> bool {
-        metadata.level() <= LogLevel::Info
-    }
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .build(
+            Root::builder()
+                .appender("stdout")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
 
-    fn log(&self, record: &LogRecord) {
-        if self.enabled(record.metadata()) {
-            println!("{:?} - {:?}", record.level(), record.args());
-        }
-    }
+    let _ = log4rs::init_config(config).unwrap();
 }
