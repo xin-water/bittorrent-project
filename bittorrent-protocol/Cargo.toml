@@ -1,6 +1,6 @@
 [package]
 name = "bittorrent-protocol"
-version = "0.3.0-bate1"
+version = "0.3.0-bate2"
 authors = ["xinwater <1872407021@qq.com>"]
 edition = "2021"
 description = "Bittorrent Protocol Library"
@@ -12,19 +12,19 @@ license     = "LGPL3"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-btp-util        = { version="0.0.1", path = "./btp-util" }
-btp-bencode     = { version="0.0.1", path = "./btp-bencode" }
-btp-metainfo    = { version="0.0.1", path = "./btp-metainfo" }
+btp-util        = { version="0.1.0", path = "./btp-util" }
+btp-bencode     = { version="0.1.0", path = "./btp-bencode" }
+btp-metainfo    = { version="0.1.0", path = "./btp-metainfo" }
 btp-magnet      = { version="0.0.1", path = "./btp-magnet" }
-btp-disk        = { version="0.0.1", path = "./btp-disk" }
-btp-dht         = { version="0.0.1", path = "./btp-dht" }
+btp-disk        = { version="0.1.0", path = "./btp-disk" }
+btp-dht         = { version="0.1.0", path = "./btp-dht" }
 btp-htracker    = { version="0.0.1", path = "./btp-htracker" }
-btp-utracker    = { version="0.0.1", path = "./btp-utracker" }
+btp-utracker    = { version="0.1.0", path = "./btp-utracker" }
 btp-lsd         = { version="0.0.1", path = "./btp-lsd" }
-btp-utp         = { version="0.0.1", path = "./btp-utp" }
-btp-handshake   = { version="0.0.1", path = "./btp-handshake" }
-btp-peer        = { version="0.0.1", path = "./btp-peer" }
-btp-select      = { version="0.0.1", path = "./btp-select" }
+btp-utp         = { version="0.1.0", path = "./btp-utp" }
+btp-handshake   = { version="0.1.0", path = "./btp-handshake" }
+btp-peer        = { version="0.1.0", path = "./btp-peer" }
+btp-select      = { version="0.1.0", path = "./btp-select" }
 
 
 log             = { version = "0.4.0", features = ["std"] }
