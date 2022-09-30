@@ -1,8 +1,19 @@
 [package]
 name = "btp-select"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+btp-metainfo    = { version="0.1.0", path = "../btp-metainfo" }
+btp-utracker    = { version="0.1.0", path = "../btp-utracker" }
+btp-handshake   = { version="0.1.0", path = "../btp-handshake" }
+btp-peer        = { version="0.1.0", path = "../btp-peer" }
+error-chain     = "0.12"
+log             = { version = "0.4.0", features = ["std"] }
+bytes           = "0.4"
+bit-set         = "0.4"
+rand            = "0.3.0"
+
+
