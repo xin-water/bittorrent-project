@@ -125,7 +125,7 @@ impl DhtBuilder {
     ///
     /// This should not be used directly, force the user to supply builder with
     /// some initial bootstrap method.
-    fn new() -> DhtBuilder {
+    pub fn new() -> DhtBuilder {
         DhtBuilder {
             nodes: HashSet::new(),
             routers: HashSet::new(),
