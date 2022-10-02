@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::sync::mpsc::SyncSender;
 
 use mio::EventLoop;
 
@@ -12,6 +11,7 @@ use crate::routing::table::{self, RoutingTable};
 use crate::transaction::MIDGenerator;
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
+use crate::worker::socket::Socket;
 
 const REFRESH_INTERVAL_TIMEOUT: u64 = 6000;
 
@@ -38,7 +38,7 @@ impl TableRefresh {
     pub fn continue_refresh<H>(
         &mut self,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> RefreshStatus
     where
@@ -67,7 +67,7 @@ impl TableRefresh {
             let find_node_msg = find_node_req.encode();
 
             // Send the message
-            if out.send((find_node_msg, node.addr())).is_err() {
+            if out.send(&find_node_msg[..], node.addr()).is_err() {
                 error!(
                     "bittorrent-protocol_dht: TableRefresh failed to send a refresh message to the out \
                         channel..."

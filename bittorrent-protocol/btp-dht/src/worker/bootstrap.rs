@@ -1,7 +1,6 @@
 use mio::{EventLoop, Timeout};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::mpsc::SyncSender;
 use log::error;
 
 use crate::handshake::Handshaker;
@@ -13,6 +12,7 @@ use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
 use btp_util::bt::{self, NodeId};
+use crate::worker::socket::Socket;
 
 const BOOTSTRAP_INITIAL_TIMEOUT: u64 = 2500;
 const BOOTSTRAP_NODE_TIMEOUT: u64 = 500;
@@ -64,7 +64,8 @@ impl TableBootstrap {
 
     pub fn start_bootstrap<H>(
         &mut self,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
+        // out: &SyncSender<(Vec<u8>, SocketAddr)>,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> BootstrapStatus
     where
@@ -103,7 +104,7 @@ impl TableBootstrap {
             .iter()
             .chain(self.starting_nodes.iter())
         {
-            if out.send((find_node_msg.clone(), *addr)).is_err() {
+            if out.send(&find_node_msg[..], *addr).is_err() {
                 error!("bittorrent-protocol_dht: Failed to send bootstrap message to router through channel...");
                 return BootstrapStatus::Failed;
             }
@@ -120,7 +121,8 @@ impl TableBootstrap {
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> BootstrapStatus
     where
@@ -160,7 +162,7 @@ impl TableBootstrap {
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> BootstrapStatus
     where
@@ -186,7 +188,7 @@ impl TableBootstrap {
     fn bootstrap_next_bucket<H>(
         &mut self,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> BootstrapStatus
     where
@@ -252,7 +254,7 @@ impl TableBootstrap {
         nodes: I,
         target_id: NodeId,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> BootstrapStatus
     where
@@ -288,7 +290,7 @@ impl TableBootstrap {
             };
 
             // Send the message to the node
-            if out.send((find_node_msg, node.addr())).is_err() {
+            if out.send(&find_node_msg[..], node.addr()).is_err() {
                 error!("bittorrent-protocol_dht: Could not send a bootstrap message through the channel...");
                 return BootstrapStatus::Failed;
             }

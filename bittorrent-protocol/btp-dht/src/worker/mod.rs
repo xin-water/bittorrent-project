@@ -9,12 +9,14 @@ use crate::router::Router;
 use crate::routing::table::{self, RoutingTable};
 use crate::transaction::TransactionID;
 use btp_util::bt::InfoHash;
+use crate::worker::socket::Socket;
 
 pub mod bootstrap;
 pub mod handler;
 pub mod lookup;
 pub mod messenger;
 pub mod refresh;
+pub mod socket;
 
 /// Task that our DHT will execute immediately.
 #[derive(Clone)]
@@ -69,7 +71,7 @@ pub enum ShutdownCause {
 /// Spawns the necessary workers that make up our local DHT node and connects them via channels
 /// so that they can send and receive DHT messages.
 pub fn start_mainline_dht<H>(
-    send_socket: UdpSocket,
+    send_socket: Socket,
     recv_socket: UdpSocket,
     read_only: bool,
     _: Option<SocketAddr>,
@@ -80,13 +82,12 @@ pub fn start_mainline_dht<H>(
 where
     H: Handshaker + 'static,
 {
-    let outgoing = messenger::create_outgoing_messenger(send_socket);
 
     // TODO: Utilize the security extension.
     let routing_table = RoutingTable::new(table::random_node_id());
     let message_sender = handler::create_dht_handler(
         routing_table,
-        outgoing,
+        send_socket,
         read_only,
         handshaker,
         kill_sock,

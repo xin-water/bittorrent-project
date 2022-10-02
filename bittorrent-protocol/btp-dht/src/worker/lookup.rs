@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::mpsc::SyncSender;
 
 use mio::{EventLoop, Timeout};
 
@@ -17,6 +16,7 @@ use crate::routing::table::RoutingTable;
 use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
+use crate::worker::socket::Socket;
 
 const LOOKUP_TIMEOUT_MS: u64 = 1500;
 const ENDGAME_TIMEOUT_MS: u64 = 1500;
@@ -70,7 +70,7 @@ impl TableLookup {
         id_generator: MIDGenerator,
         will_announce: bool,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> Option<TableLookup>
     where
@@ -132,7 +132,8 @@ impl TableLookup {
         trans_id: &TransactionID,
         msg: GetPeersResponse<'a>,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> LookupStatus
     where
@@ -264,7 +265,7 @@ impl TableLookup {
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> LookupStatus
     where
@@ -294,7 +295,7 @@ impl TableLookup {
         &mut self,
         handshake_port: u16,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
     ) -> LookupStatus {
         let mut fatal_error = false;
 
@@ -321,7 +322,7 @@ impl TableLookup {
                 );
                 let announce_peer_msg = announce_peer_req.encode();
 
-                if out.send((announce_peer_msg, node.addr())).is_err() {
+                if out.send(&announce_peer_msg[..], node.addr()).is_err() {
                     error!(
                         "bittorrent-protocol_dht: TableLookup announce request failed to send through the out \
                             channel..."
@@ -359,7 +360,8 @@ impl TableLookup {
         &mut self,
         nodes: I,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> LookupStatus
     where
@@ -391,7 +393,7 @@ impl TableLookup {
             // Send the message to the node
             let get_peers_msg =
                 GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-            if out.send((get_peers_msg, node.addr())).is_err() {
+            if out.send(&get_peers_msg[..], node.addr()).is_err() {
                 error!("bittorrent-protocol_dht: Could not send a lookup message through the channel...");
                 return LookupStatus::Failed;
             }
@@ -416,7 +418,8 @@ impl TableLookup {
     fn start_endgame_round<H>(
         &mut self,
         table: &RoutingTable,
-        out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
+        out: &Socket,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> LookupStatus
     where
@@ -460,7 +463,7 @@ impl TableLookup {
                 // Send the message to the node
                 let get_peers_msg =
                     GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-                if out.send((get_peers_msg, node.addr())).is_err() {
+                if out.send(&get_peers_msg[..], node.addr()).is_err() {
                     error!("bittorrent-protocol_dht: Could not send an endgame message through the channel...");
                     return LookupStatus::Failed;
                 }

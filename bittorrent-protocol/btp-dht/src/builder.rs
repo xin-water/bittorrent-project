@@ -12,6 +12,7 @@ use btp_util::net;
 use crate::handshake::Handshaker;
 use crate::router::Router;
 use crate::worker::{self, DhtEvent, OneshotTask, ShutdownCause};
+use crate::worker::socket::Socket;
 
 /// Maintains a Distributed Hash (Routing) Table.
 pub struct MainlineDht {
@@ -24,14 +25,16 @@ impl MainlineDht {
     where
         H: Handshaker + 'static,
     {
-        let send_sock = UdpSocket::bind(&builder.src_addr)?;
-        let recv_sock = send_sock.try_clone()?;
+        let udp_socket = UdpSocket::bind(&builder.src_addr)?;
+        let send_socket = Socket::new(udp_socket.try_clone()?)?;
+        let recv_sock = udp_socket.try_clone()?;
 
-        let kill_sock = send_sock.try_clone()?;
-        let kill_addr = send_sock.local_addr()?;
+
+        let kill_sock = udp_socket.try_clone()?;
+        let kill_addr = udp_socket.local_addr()?;
 
         let send = worker::start_mainline_dht(
-            send_sock,
+            send_socket,
             recv_sock,
             builder.read_only,
             builder.ext_addr,

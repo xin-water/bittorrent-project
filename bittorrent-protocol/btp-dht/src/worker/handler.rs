@@ -42,6 +42,7 @@ use crate::worker::bootstrap::{BootstrapStatus, TableBootstrap};
 use crate::worker::lookup::{LookupStatus, TableLookup};
 use crate::worker::refresh::{RefreshStatus, TableRefresh};
 use crate::worker::{DhtEvent, OneshotTask, ScheduledTask, ShutdownCause};
+use crate::worker::socket::Socket;
 
 // TODO: Update modules to use find_node on the routing table to update the status of a given node.
 
@@ -51,7 +52,8 @@ const BOOTSTRAP_GOOD_NODE_THRESHOLD: usize = 10;
 /// Spawns a DHT handler that maintains our routing table and executes our actions on the DHT.
 pub fn create_dht_handler<H>(
     table: RoutingTable,
-    out: SyncSender<(Vec<u8>, SocketAddr)>,
+   // out: SyncSender<(Vec<u8>, SocketAddr)>,
+    socket: Socket,
     read_only: bool,
     handshaker: H,
     kill_sock: UdpSocket,
@@ -60,7 +62,7 @@ pub fn create_dht_handler<H>(
 where
     H: Handshaker + 'static,
 {
-    let mut handler = DhtHandler::new(table, out, read_only, handshaker);
+    let mut handler = DhtHandler::new(table,socket, read_only, handshaker);
     let mut event_loop = EventLoop::new()?;
 
     let loop_channel = event_loop.channel();
@@ -123,7 +125,8 @@ pub struct DhtHandler<H> {
 struct DetachedDhtHandler<H> {
     read_only: bool,
     handshaker: H,
-    out_channel: SyncSender<(Vec<u8>, SocketAddr)>,
+   // out_channel: SyncSender<(Vec<u8>, SocketAddr)>,
+    socket: Socket,
     token_store: TokenStore,
     aid_generator: AIDGenerator,
     bootstrapping: bool,
@@ -141,7 +144,8 @@ where
 {
     fn new(
         table: RoutingTable,
-        out: SyncSender<(Vec<u8>, SocketAddr)>,
+        //out: SyncSender<(Vec<u8>, SocketAddr)>,
+        socket: Socket,
         read_only: bool,
         handshaker: H,
     ) -> DhtHandler<H> {
@@ -159,7 +163,8 @@ where
         let detached = DetachedDhtHandler {
             read_only: read_only,
             handshaker: handshaker,
-            out_channel: out,
+           // out_channel: out,
+            socket: socket,
             token_store: TokenStore::new(),
             aid_generator: aid_generator,
             bootstrapping: false,
@@ -332,6 +337,7 @@ where
     );
 
     // Check if we reached the maximum bootstrap attempts
+    // todo 不应该关闭 dht ，因为作为初始节点是可以没有其他节点存在的。
     if *attempts >= MAX_BOOTSTRAP_ATTEMPTS {
         if num_good_nodes(&work_storage.routing_table) == 0 {
             // Failed to get any nodes in the rebootstrap attempts, shut down
@@ -341,7 +347,7 @@ where
             Some(false)
         }
     } else {
-        let bootstrap_status = bootstrap.start_bootstrap(&work_storage.out_channel, event_loop);
+        let bootstrap_status = bootstrap.start_bootstrap(&work_storage.socket, event_loop);
 
         match bootstrap_status {
             BootstrapStatus::Idle => Some(false),
@@ -427,7 +433,7 @@ fn handle_incoming<H>(
                 PingResponse::new(p.transaction_id(), work_storage.routing_table.node_id());
             let ping_msg = ping_rsp.encode();
 
-            if work_storage.out_channel.send((ping_msg, addr)).is_err() {
+            if work_storage.socket.send(&ping_msg[..], addr).is_err() {
                 error!(
                     "bittorrent-protocol_dht: Failed to send a ping response on the out channel..."
                 );
@@ -463,8 +469,9 @@ fn handle_incoming<H>(
             let find_node_msg = find_node_rsp.encode();
 
             if work_storage
-                .out_channel
-                .send((find_node_msg, addr))
+                // .out_channel
+                // .send((find_node_msg, addr))
+                .socket.send(&find_node_msg[..],addr)
                 .is_err()
             {
                 error!("bittorrent-protocol_dht: Failed to send a find node response on the out channel...");
@@ -551,8 +558,9 @@ fn handle_incoming<H>(
             let get_peers_msg = get_peers_rsp.encode();
 
             if work_storage
-                .out_channel
-                .send((get_peers_msg, addr))
+                // .out_channel
+                // .send((get_peers_msg, addr))
+                .socket.send(&get_peers_msg[..],addr)
                 .is_err()
             {
                 error!("bittorrent-protocol_dht: Failed to send a get peers response on the out channel...");
@@ -625,7 +633,7 @@ fn handle_incoming<H>(
                 .encode()
             };
 
-            if work_storage.out_channel.send((response_msg, addr)).is_err() {
+            if work_storage.socket.send(&response_msg[..],addr).is_err() {
                 error!("bittorrent-protocol_dht: Failed to send an announce peer response on the out channel...");
                 shutdown_event_loop(event_loop, ShutdownCause::Unspecified);
             }
@@ -673,7 +681,7 @@ fn handle_incoming<H>(
                     match bootstrap.recv_response(
                         &trans_id,
                         &work_storage.routing_table,
-                        &work_storage.out_channel,
+                        &work_storage.socket,
                         event_loop,
                     ) {
                         BootstrapStatus::Idle => true,
@@ -768,7 +776,7 @@ fn handle_incoming<H>(
                     &trans_id,
                     g,
                     &work_storage.routing_table,
-                    &work_storage.out_channel,
+                    &work_storage.socket,
                     event_loop,
                 ) {
                     LookupStatus::Searching => (),
@@ -790,14 +798,17 @@ fn handle_incoming<H>(
                 }
             }
         }
+        //todo
         Ok(MessageType::Response(ResponseType::Ping(_))) => {
             info!("bittorrent-protocol_dht: Received a PingResponse...");
 
             // Yeah...we should never be getting this type of response (we never use this message)
         }
+        //todo
         Ok(MessageType::Response(ResponseType::AnnouncePeer(_))) => {
             info!("bittorrent-protocol_dht: Received an AnnouncePeerResponse...");
         }
+        //todo
         Ok(MessageType::Error(e)) => {
             info!("bittorrent-protocol_dht: Received an ErrorMessage...");
 
@@ -843,7 +854,7 @@ fn handle_start_bootstrap<H>(
     );
 
     // Begin the bootstrap operation
-    let bootstrap_status = table_bootstrap.start_bootstrap(&work_storage.out_channel, event_loop);
+    let bootstrap_status = table_bootstrap.start_bootstrap(&work_storage.socket, event_loop);
 
     work_storage.bootstrapping = true;
     table_actions.insert(action_id, TableAction::Bootstrap(table_bootstrap, 0));
@@ -902,7 +913,7 @@ fn handle_start_lookup<H>(
             mid_generator,
             should_announce,
             &work_storage.routing_table,
-            &work_storage.out_channel,
+            &work_storage.socket,
             event_loop,
         ) {
             Some(lookup) => {
@@ -941,7 +952,7 @@ fn handle_check_table_refresh<H>(
     let opt_refresh_status = match table_actions.get_mut(&trans_id.action_id()) {
         Some(&mut TableAction::Refresh(ref mut refresh)) => Some(refresh.continue_refresh(
             &work_storage.routing_table,
-            &work_storage.out_channel,
+            &work_storage.socket,
             event_loop,
         )),
         Some(&mut TableAction::Lookup(_)) => {
@@ -989,7 +1000,7 @@ fn handle_check_bootstrap_timeout<H>(
                 bootstrap.recv_timeout(
                     &trans_id,
                     &work_storage.routing_table,
-                    &work_storage.out_channel,
+                    &work_storage.socket,
                     event_loop,
                 ),
                 bootstrap,
@@ -1062,7 +1073,7 @@ fn handle_check_lookup_timeout<H>(
             lookup.recv_timeout(
                 &trans_id,
                 &work_storage.routing_table,
-                &work_storage.out_channel,
+                &work_storage.socket,
                 event_loop,
             ),
             lookup.info_hash(),
@@ -1125,7 +1136,7 @@ fn handle_check_lookup_endgame<H>(
             lookup.recv_finished(
                 work_storage.handshaker.port(),
                 &work_storage.routing_table,
-                &work_storage.out_channel,
+                &work_storage.socket,
             ),
             lookup.info_hash(),
         )),
