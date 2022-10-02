@@ -36,6 +36,8 @@ bittorrent-protocol：Implementation of BT protocol library.
 
          UTP: implementation of UTP protocol.
 
+         NAT: network address Translation   
+
          Handshake: handshake information processing module.
 
          Peer: BT write protocol support.

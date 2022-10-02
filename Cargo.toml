@@ -18,6 +18,7 @@ members=[
     "bittorrent-protocol/btp-lsd",
 
     "bittorrent-protocol/btp-utp",
+    "bittorrent-protocol/btp-nat",
     "bittorrent-protocol/btp-handshake",
     "bittorrent-protocol/btp-peer",
     "bittorrent-protocol/btp-select",

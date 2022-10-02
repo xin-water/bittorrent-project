@@ -21,6 +21,7 @@ btp-dht         = { version="0.1.0", path = "./btp-dht" }
 btp-htracker    = { version="0.0.1", path = "./btp-htracker" }
 btp-utracker    = { version="0.1.0", path = "./btp-utracker" }
 btp-lsd         = { version="0.0.1", path = "./btp-lsd" }
+btp-nat         = { version="0.0.1", path = "./btp-nat" }
 btp-utp         = { version="0.1.0", path = "./btp-utp" }
 btp-handshake   = { version="0.1.0", path = "./btp-handshake" }
 btp-peer        = { version="0.1.0", path = "./btp-peer" }

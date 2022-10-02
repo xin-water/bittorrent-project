@@ -35,6 +35,8 @@ bittorrent-protocol：BT协议库实现。
 
             utp：utp协议实现。 
 
+            nat：地址转换相关。
+
             handshake：握手信息处理模块。
 
             peer：BT write 协议支持。
