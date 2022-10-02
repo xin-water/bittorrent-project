@@ -19,7 +19,10 @@ fn main() {
         filter: HashSet::new(),
         count: 0,
     };
-    let dht = DhtBuilder::with_router(Router::BitTorrent)
+    let dht = DhtBuilder::new()
+        .add_router(Router::BitTorrent)
+        .add_router(Router::Custom(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(84,68,129,186),6881))))
+        .add_router(Router::Custom(SocketAddr::V4("24.38.230.49:50321".parse().unwrap())))
         .set_source_addr(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(0, 0, 0, 0),
             6889,
@@ -107,7 +110,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Info),
         )
         .unwrap();
 
