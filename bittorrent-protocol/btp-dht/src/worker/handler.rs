@@ -295,6 +295,8 @@ fn broadcast_bootstrap_completed<H>(
     // Remove the bootstrap action from our table actions
     table_actions.remove(&action_id);
 
+    warn!("remove bootstrap action_id:{:?}",&action_id);
+
     // Start the post bootstrap actions.
     let mut future_actions = work_storage.future_actions.split_off(0);
     for table_action in future_actions.drain(..) {
@@ -402,7 +404,10 @@ fn handle_incoming<H>(
             Some(&TableAction::Lookup(_)) => ExpectedResponse::GetPeers,
             Some(&TableAction::Refresh(_)) => ExpectedResponse::FindNode,
             Some(&TableAction::Bootstrap(_, _)) => ExpectedResponse::FindNode,
-            None => ExpectedResponse::None,
+            None => {
+                error!("not find ExpectedResponse for action_id:{:?}",&trans_id.action_id);
+                ExpectedResponse::None
+            },
         }
     });
 
@@ -737,7 +742,7 @@ fn handle_incoming<H>(
             }
         }
         Ok(MessageType::Response(ResponseType::GetPeers(g))) => {
-            // info!("bittorrent-protocol_dht: Received a GetPeersResponse...");
+            info!("bittorrent-protocol_dht: Received a GetPeersResponse...");
             let trans_id = TransactionID::from_bytes(g.transaction_id()).unwrap();
             let node = Node::as_good(g.node_id(), addr);
 
@@ -1130,6 +1135,8 @@ fn handle_check_lookup_endgame<H>(
     H: Handshaker,
 {
     let (work_storage, table_actions) = (&mut handler.detached, &mut handler.table_actions);
+
+    warn!("remove lookup action_id:{:?}",&trans_id.action_id());
 
     let opt_lookup_info = match table_actions.remove(&trans_id.action_id()) {
         Some(TableAction::Lookup(mut lookup)) => Some((
