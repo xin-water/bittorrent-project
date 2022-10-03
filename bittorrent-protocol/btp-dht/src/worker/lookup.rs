@@ -328,6 +328,9 @@ impl TableLookup {
                             channel..."
                     );
                     fatal_error = true;
+
+                    //  某些情况可能不是发送端口问题，所以不能直接跳出循环
+                    // break
                 }
 
                 if !fatal_error {
