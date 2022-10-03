@@ -42,7 +42,7 @@ fn main() {
     // let hash = InfoHash::from_bytes(b"My Unique Info Hash");
     //  ubuntu-22.04.1-desktop-amd64.iso  is  3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0
     let hash = InfoHash::from_bytes(b"3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
-
+    println!("\n InfoHash is: {:?}", &hash);
     // Let the user announce or search on our info hash
     let stdin = io::stdin();
     let stdin_lock = stdin.lock();
@@ -110,7 +110,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Info),
+                .build(LevelFilter::Warn),
         )
         .unwrap();
 
