@@ -133,8 +133,7 @@ impl TableBootstrap {
             *t
         } else {
             warn!(
-                "bittorrent-protocol_dht: Received expired/unsolicited node response for an active table \
-                   bootstrap..."
+                "dht: Received bootstrap node response timeout, not in active_messages list ..."
             );
             return self.current_bootstrap_status();
         };
@@ -170,8 +169,7 @@ impl TableBootstrap {
     {
         if self.active_messages.remove(trans_id).is_none() {
             warn!(
-                "bittorrent-protocol_dht: Received expired/unsolicited node timeout for an active table \
-                   bootstrap..."
+                "dht: bootstrap is response, active_message list not find...."
             );
             return self.current_bootstrap_status();
         }

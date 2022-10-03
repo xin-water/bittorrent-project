@@ -144,8 +144,7 @@ impl TableLookup {
             lookup
         } else {
             warn!(
-                "bittorrent-protocol_dht: Received expired/unsolicited node response for an active table \
-                   lookup..."
+                "dht: Received lookup node response timeout, not in active_lookup list ..."
             );
             return self.current_lookup_status();
         };
@@ -273,8 +272,7 @@ impl TableLookup {
     {
         if self.active_lookups.remove(trans_id).is_none() {
             warn!(
-                "bittorrent-protocol_dht: Received expired/unsolicited node timeout for an active table \
-                   lookup..."
+                "dht: lookup is response, active_lookup list not find...."
             );
             return self.current_lookup_status();
         }
