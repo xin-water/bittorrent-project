@@ -57,14 +57,14 @@ impl<'a> FindNodeRequest<'a> {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        (ben_map! {
+        (dht_ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => ben_bytes!(message::REQUEST_TYPE_KEY),
-            message::REQUEST_TYPE_KEY => ben_bytes!(request::FIND_NODE_TYPE_KEY),
-            request::REQUEST_ARGS_KEY => ben_map!{
-                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref()),
-                message::TARGET_ID_KEY => ben_bytes!(self.target_id.as_ref())
+            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::REQUEST_TYPE_KEY),
+            message::REQUEST_TYPE_KEY => dht_ben_bytes!(request::FIND_NODE_TYPE_KEY),
+            request::REQUEST_ARGS_KEY => dht_ben_map!{
+                message::NODE_ID_KEY => dht_ben_bytes!(self.node_id.as_ref()),
+                message::TARGET_ID_KEY => dht_ben_bytes!(self.target_id.as_ref())
             }
         })
         .encode()
@@ -121,13 +121,13 @@ impl<'a> FindNodeResponse<'a> {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        (ben_map! {
+        (dht_ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
-            message::RESPONSE_TYPE_KEY => ben_map!{
-                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref()),
-                message::NODES_KEY => ben_bytes!(self.nodes.nodes())
+            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::RESPONSE_TYPE_KEY),
+            message::RESPONSE_TYPE_KEY => dht_ben_map!{
+                message::NODE_ID_KEY => dht_ben_bytes!(self.node_id.as_ref()),
+                message::NODES_KEY => dht_ben_bytes!(self.nodes.nodes())
             }
         })
         .encode()
