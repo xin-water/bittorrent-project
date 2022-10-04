@@ -19,8 +19,8 @@ extern crate log;
 #[macro_use]
 extern crate error_chain;
 
-#[macro_use]
-extern crate btp_bencode;
+//#[macro_use]
+//extern crate btp_bencode;
 
 mod handshake;
 pub use self::handshake::DhtDiscoveryInfo;
