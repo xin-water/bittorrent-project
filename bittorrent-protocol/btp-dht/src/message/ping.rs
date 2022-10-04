@@ -7,6 +7,7 @@ use btp_util::bt::NodeId;
 use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use crate::error::DhtResult;
 use crate::message;
+use crate::message::acting::ActingResponse;
 use crate::message::request::{self, RequestValidate};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -57,47 +58,50 @@ impl<'a> PingRequest<'a> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct PingResponse<'a> {
-    trans_id: &'a [u8],
-    node_id: NodeId,
-}
+// #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+// pub struct PingResponse<'a> {
+//     trans_id: &'a [u8],
+//     node_id: NodeId,
+// }
+
+pub type PingResponse<'a> = ActingResponse<'a>;
 
 /// Reuse functionality of ping request since the structures are identical.
-impl<'a> PingResponse<'a> {
-    pub fn new(trans_id: &'a [u8], node_id: NodeId) -> PingResponse<'a> {
-        PingResponse {
-            trans_id: trans_id,
-            node_id: node_id,
-        }
-    }
 
-    pub fn from_parts(
-        rsp_root: &dyn Dictionary<'a, Bencode<'a>>,
-        trans_id: &'a [u8],
-    ) -> DhtResult<PingResponse<'a>> {
-        let request = PingRequest::from_parts(rsp_root, trans_id)?;
-
-        Ok(PingResponse::new(request.trans_id, request.node_id))
-    }
-
-    pub fn transaction_id(&self) -> &'a [u8] {
-        self.trans_id
-    }
-
-    pub fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    pub fn encode(&self) -> Vec<u8> {
-        (ben_map! {
-            //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
-            message::RESPONSE_TYPE_KEY => ben_map!{
-                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref())
-            }
-        })
-        .encode()
-    }
-}
+// impl<'a> PingResponse<'a> {
+//     pub fn new(trans_id: &'a [u8], node_id: NodeId) -> PingResponse<'a> {
+//         PingResponse {
+//             trans_id: trans_id,
+//             node_id: node_id,
+//         }
+//     }
+//
+//     pub fn from_parts(
+//         rsp_root: &dyn Dictionary<'a, Bencode<'a>>,
+//         trans_id: &'a [u8],
+//     ) -> DhtResult<PingResponse<'a>> {
+//         let request = PingRequest::from_parts(rsp_root, trans_id)?;
+//
+//         Ok(PingResponse::new(request.trans_id, request.node_id))
+//     }
+//
+//     pub fn transaction_id(&self) -> &'a [u8] {
+//         self.trans_id
+//     }
+//
+//     pub fn node_id(&self) -> NodeId {
+//         self.node_id
+//     }
+//
+//     pub fn encode(&self) -> Vec<u8> {
+//         (ben_map! {
+//             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
+//             message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+//             message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
+//             message::RESPONSE_TYPE_KEY => ben_map!{
+//                 message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref())
+//             }
+//         })
+//         .encode()
+//     }
+// }

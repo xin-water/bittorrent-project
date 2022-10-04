@@ -7,6 +7,7 @@ use btp_util::bt::{InfoHash, NodeId};
 use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use crate::error::DhtResult;
 use crate::message;
+use crate::message::acting::ActingResponse;
 use crate::message::request::{self, RequestValidate};
 
 const PORT_KEY: &'static str = "port";
@@ -130,49 +131,51 @@ impl<'a> AnnouncePeerRequest<'a> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct AnnouncePeerResponse<'a> {
-    trans_id: &'a [u8],
-    node_id: NodeId,
-}
+// #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+// pub struct AnnouncePeerResponse<'a> {
+//     trans_id: &'a [u8],
+//     node_id: NodeId,
+// }
 
-impl<'a> AnnouncePeerResponse<'a> {
-    pub fn new(trans_id: &'a [u8], node_id: NodeId) -> AnnouncePeerResponse<'a> {
-        AnnouncePeerResponse {
-            trans_id: trans_id,
-            node_id: node_id,
-        }
-    }
+pub type AnnouncePeerResponse<'a> = ActingResponse<'a>;
 
-    pub fn from_parts(
-        rqst_root: &dyn Dictionary<'a, Bencode<'a>>,
-        trans_id: &'a [u8],
-    ) -> DhtResult<AnnouncePeerResponse<'a>> {
-        let validate = RequestValidate::new(&trans_id);
-
-        let node_id_bytes = validate.lookup_and_convert_bytes(rqst_root, message::NODE_ID_KEY)?;
-        let node_id = validate.validate_node_id(node_id_bytes)?;
-
-        Ok(AnnouncePeerResponse::new(trans_id, node_id))
-    }
-
-    pub fn transaction_id(&self) -> &'a [u8] {
-        self.trans_id
-    }
-
-    pub fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    pub fn encode(&self) -> Vec<u8> {
-        (ben_map! {
-            //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
-            message::RESPONSE_TYPE_KEY => ben_map!{
-                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref())
-            }
-        })
-        .encode()
-    }
-}
+// impl<'a> AnnouncePeerResponse<'a> {
+//     pub fn new(trans_id: &'a [u8], node_id: NodeId) -> AnnouncePeerResponse<'a> {
+//         AnnouncePeerResponse {
+//             trans_id: trans_id,
+//             node_id: node_id,
+//         }
+//     }
+//
+//     pub fn from_parts(
+//         rqst_root: &dyn Dictionary<'a, Bencode<'a>>,
+//         trans_id: &'a [u8],
+//     ) -> DhtResult<AnnouncePeerResponse<'a>> {
+//         let validate = RequestValidate::new(&trans_id);
+//
+//         let node_id_bytes = validate.lookup_and_convert_bytes(rqst_root, message::NODE_ID_KEY)?;
+//         let node_id = validate.validate_node_id(node_id_bytes)?;
+//
+//         Ok(AnnouncePeerResponse::new(trans_id, node_id))
+//     }
+//
+//     pub fn transaction_id(&self) -> &'a [u8] {
+//         self.trans_id
+//     }
+//
+//     pub fn node_id(&self) -> NodeId {
+//         self.node_id
+//     }
+//
+//     pub fn encode(&self) -> Vec<u8> {
+//         (ben_map! {
+//             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
+//             message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+//             message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
+//             message::RESPONSE_TYPE_KEY => ben_map!{
+//                 message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref())
+//             }
+//         })
+//         .encode()
+//     }
+// }
