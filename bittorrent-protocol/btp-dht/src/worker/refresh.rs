@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 
 use mio::EventLoop;
 
-use crate::handshake::Handshaker;
 use btp_util::bt::{self, NodeId};
 
 use crate::message::find_node::FindNodeRequest;
@@ -35,14 +34,13 @@ impl TableRefresh {
         }
     }
 
-    pub fn continue_refresh<H>(
+    pub fn continue_refresh(
         &mut self,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> RefreshStatus
-    where
-        H: Handshaker,
+
     {
         if self.curr_refresh_bucket == table::MAX_BUCKETS {
             self.curr_refresh_bucket = 0;

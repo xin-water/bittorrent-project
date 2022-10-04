@@ -5,7 +5,6 @@ use std::sync::mpsc::SyncSender;
 
 use mio;
 
-use crate::handshake::Handshaker;
 use crate::router::Router;
 use crate::routing::table::{self, RoutingTable};
 use crate::transaction::TransactionID;
@@ -71,18 +70,16 @@ pub enum ShutdownCause {
 
 /// Spawns the necessary workers that make up our local DHT node and connects them via channels
 /// so that they can send and receive DHT messages.
-pub fn start_mainline_dht<H>(
+pub fn start_mainline_dht(
     send_socket: Socket,
     recv_socket: UdpSocket,
     read_only: bool,
     _: Option<SocketAddr>,
     announce_port: Option<u16>,
-    handshaker: H,
     kill_sock: UdpSocket,
     kill_addr: SocketAddr,
 ) -> io::Result<mio::Sender<OneshotTask>>
-where
-    H: Handshaker + 'static,
+
 {
 
     // TODO: Utilize the security extension.
@@ -92,7 +89,6 @@ where
         send_socket,
         read_only,
         announce_port,
-        handshaker,
         kill_sock,
         kill_addr,
     )?;

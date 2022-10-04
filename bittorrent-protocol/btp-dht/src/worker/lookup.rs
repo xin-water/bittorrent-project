@@ -8,7 +8,6 @@ use btp_util::bt::{self, InfoHash, NodeId};
 use btp_util::net;
 use btp_util::sha::ShaHash;
 
-use crate::handshake::Handshaker;
 use crate::message::announce_peer::{AnnouncePeerRequest, ConnectPort};
 use crate::message::get_peers::{CompactInfoType, GetPeersRequest, GetPeersResponse};
 use crate::routing::bucket;
@@ -65,7 +64,7 @@ pub struct TableLookup {
 // Gather nodes
 
 impl TableLookup {
-    pub fn new<H>(
+    pub fn new(
         table_id: NodeId,
         target_id: InfoHash,
         id_generator: MIDGenerator,
@@ -73,10 +72,9 @@ impl TableLookup {
         table: &RoutingTable,
         out: &Socket,
         tx: SyncSender<SocketAddr>,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> Option<TableLookup>
-    where
-        H: Handshaker,
+
     {
         // Pick a buckets worth of nodes and put them into the all_sorted_nodes list
         let mut all_sorted_nodes = Vec::with_capacity(bucket::MAX_BUCKET_SIZE);
@@ -129,7 +127,7 @@ impl TableLookup {
         self.target_id
     }
 
-    pub fn recv_response<'a, H>(
+    pub fn recv_response<'a>(
         &mut self,
         node: Node,
         trans_id: &TransactionID,
@@ -137,10 +135,8 @@ impl TableLookup {
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> LookupStatus
-    where
-        H: Handshaker,
     {
         // Process the message transaction id
         let (dist_to_beat, timeout) = if let Some(lookup) = self.active_lookups.remove(trans_id) {
@@ -267,15 +263,14 @@ impl TableLookup {
         self.current_lookup_status()
     }
 
-    pub fn recv_timeout<H>(
+    pub fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> LookupStatus
-    where
-        H: Handshaker,
+
     {
         if self.active_lookups.remove(trans_id).is_none() {
             warn!(
@@ -298,7 +293,6 @@ impl TableLookup {
 
     pub fn recv_finished(
         &mut self,
-        handshake_port: u16,
         announce_port: Option<u16>,
         table: &RoutingTable,
         out: &Socket,
@@ -365,17 +359,17 @@ impl TableLookup {
         }
     }
 
-    fn start_request_round<'a, H, I>(
+    fn start_request_round<'a, I>(
         &mut self,
         nodes: I,
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> LookupStatus
     where
         I: Iterator<Item = (&'a Node, DistanceToBeat)>,
-        H: Handshaker,
+
     {
         // Loop through the given nodes
         let mut messages_sent = 0;
@@ -424,15 +418,14 @@ impl TableLookup {
         }
     }
 
-    fn start_endgame_round<H>(
+    fn start_endgame_round(
         &mut self,
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> LookupStatus
-    where
-        H: Handshaker,
+
     {
         // Entering the endgame phase
         self.in_endgame = true;

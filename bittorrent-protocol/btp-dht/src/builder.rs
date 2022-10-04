@@ -21,9 +21,7 @@ pub struct MainlineDht {
 
 impl MainlineDht {
     /// Start the MainlineDht with the given DhtBuilder and Handshaker.
-    fn with_builder<H>(builder: DhtBuilder, handshaker: H) -> io::Result<MainlineDht>
-    where
-        H: Handshaker + 'static,
+    fn with_builder(builder: DhtBuilder) -> io::Result<MainlineDht>
     {
         let udp_socket = UdpSocket::bind(&builder.src_addr)?;
         let send_socket = Socket::new(udp_socket.try_clone()?)?;
@@ -39,7 +37,6 @@ impl MainlineDht {
             builder.read_only,
             builder.ext_addr,
             builder.announce_port,
-            handshaker,
             kill_sock,
             kill_addr,
         )?;
@@ -216,10 +213,8 @@ impl DhtBuilder {
     }
 
     /// Start a mainline DHT with the current configuration.
-    pub fn start_mainline<H>(self, handshaker: H) -> io::Result<MainlineDht>
-    where
-        H: Handshaker + 'static,
+    pub fn start_mainline(self) -> io::Result<MainlineDht>
     {
-        MainlineDht::with_builder(self, handshaker)
+        MainlineDht::with_builder(self)
     }
 }

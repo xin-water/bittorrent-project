@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use log::error;
 
-use crate::handshake::Handshaker;
 use crate::message::find_node::FindNodeRequest;
 use crate::routing::bucket::Bucket;
 use crate::routing::node::{Node, NodeStatus};
@@ -62,14 +61,13 @@ impl TableBootstrap {
         }
     }
 
-    pub fn start_bootstrap<H>(
+    pub fn start_bootstrap(
         &mut self,
         out: &Socket,
         // out: &SyncSender<(Vec<u8>, SocketAddr)>,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> BootstrapStatus
-    where
-        H: Handshaker,
+
     {
         // Reset the bootstrap state
         self.active_messages.clear();
@@ -117,16 +115,15 @@ impl TableBootstrap {
         self.starting_routers.contains(&addr)
     }
 
-    pub fn recv_response<'a, H>(
+    pub fn recv_response<'a>(
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> BootstrapStatus
-    where
-        H: Handshaker,
+
     {
         // Process the message transaction id
         let timeout = if let Some(t) = self.active_messages.get(trans_id) {
@@ -157,15 +154,14 @@ impl TableBootstrap {
         self.current_bootstrap_status()
     }
 
-    pub fn recv_timeout<H>(
+    pub fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> BootstrapStatus
-    where
-        H: Handshaker,
+
     {
         if self.active_messages.remove(trans_id).is_none() {
             warn!(
@@ -183,14 +179,13 @@ impl TableBootstrap {
     }
 
     // Returns true if there are more buckets to bootstrap, false otherwise
-    fn bootstrap_next_bucket<H>(
+    fn bootstrap_next_bucket(
         &mut self,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> BootstrapStatus
-    where
-        H: Handshaker,
+
     {
         let target_id = flip_id_bit_at_index(self.table_id, self.curr_bootstrap_bucket);
 
@@ -247,17 +242,16 @@ impl TableBootstrap {
         }
     }
 
-    fn send_bootstrap_requests<'a, H, I>(
+    fn send_bootstrap_requests<'a, I>(
         &mut self,
         nodes: I,
         target_id: NodeId,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler<H>>,
+        event_loop: &mut EventLoop<DhtHandler>,
     ) -> BootstrapStatus
     where
         I: Iterator<Item = &'a Node>,
-        H: Handshaker,
     {
         info!(
             "bittorrent-protocol_dht: bootstrap::send_bootstrap_requests {}",

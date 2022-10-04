@@ -15,10 +15,6 @@ fn main() {
     init_log();
     info!("start run .......");
 
-    let handshaker = SimpleHandshaker {
-        filter: HashSet::new(),
-        count: 0,
-    };
     let dht = DhtBuilder::new()
         .add_router(Router::BitTorrent)
         .add_router(Router::Custom(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(84,68,129,186),6881))))
@@ -29,7 +25,7 @@ fn main() {
         )))
         .set_announce_port(5432)
         .set_read_only(false)
-        .start_mainline(handshaker)
+        .start_mainline()
         .unwrap();
 
     // Spawn a thread to listen to and report events
@@ -61,48 +57,6 @@ fn main() {
                println!("Received new peer {:?}, total unique peers {:?}",addr,total);
            }
        }
-    }
-}
-
-struct SimpleHandshaker {
-    filter: HashSet<SocketAddr>,
-    count: usize,
-}
-
-impl Handshaker for SimpleHandshaker {
-    /// Type of stream used to receive connections from.
-    type Metadata = ();
-
-    /// Unique peer id used to identify ourselves to other peers.
-    fn id(&self) -> PeerId {
-        [0u8; 20].into()
-    }
-
-    /// Advertise port that is being listened on by the handshaker.
-    ///
-    /// It is important that this is the external port that the peer will be sending data
-    /// to. This is relevant if the client employs nat traversal via upnp or other means.
-    fn port(&self) -> u16 {
-        6889
-    }
-
-    /// Initiates a handshake with the given socket address.
-    fn connect(&mut self, _: Option<PeerId>, _: InfoHash, addr: SocketAddr) {
-        if self.filter.contains(&addr) {
-            return;
-        }
-
-        self.filter.insert(addr);
-        self.count += 1;
-        println!(
-            "Received new peer {:?}, total unique peers {:?}",
-            addr, self.count
-        );
-    }
-
-    /// Send the given Metadata back to the client.
-    fn metadata(&mut self, _: Self::Metadata) {
-        ()
     }
 }
 
