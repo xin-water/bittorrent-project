@@ -31,7 +31,7 @@ fn send_bytes(socket: &UdpSocket, bytes: &[u8], addr: SocketAddr) {
         } else {
             // TODO: Maybe shut down in this case, will fail on every write...
             warn!(
-                "bittorrent-protocol_dht: Outgoing messenger failed to write {} bytes to {}; {} bytes written \
+                "bittorrent-protocol_dht: message Outgoing messenger failed to write {} bytes to {}; {} bytes written \
                    before error...",
                 bytes.len(),
                 addr,
