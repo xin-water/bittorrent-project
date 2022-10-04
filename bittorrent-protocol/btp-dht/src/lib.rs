@@ -22,10 +22,6 @@ extern crate error_chain;
 //#[macro_use]
 //extern crate btp_bencode;
 
-mod handshake;
-pub use self::handshake::DhtDiscoveryInfo;
-pub use self::handshake::Handshaker;
-
 #[macro_use]
 pub mod bencode;
 

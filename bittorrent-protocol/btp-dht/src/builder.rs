@@ -9,7 +9,6 @@ use mio::Sender;
 use btp_util::bt::InfoHash;
 use btp_util::net;
 
-use crate::handshake::Handshaker;
 use crate::router::Router;
 use crate::worker::{self, DhtEvent, OneshotTask, ShutdownCause};
 use crate::worker::socket::Socket;

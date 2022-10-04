@@ -1,7 +1,6 @@
-use btp_dht::{DhtBuilder, Handshaker, Router};
-use btp_util::bt::{InfoHash, PeerId};
+use btp_dht::{DhtBuilder, Router};
+use btp_util::bt::InfoHash;
 use log::{info, LevelFilter};
-use std::collections::HashSet;
 use std::io::{self, Read};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::thread::{self};
