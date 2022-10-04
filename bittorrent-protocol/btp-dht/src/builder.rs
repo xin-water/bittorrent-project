@@ -38,6 +38,7 @@ impl MainlineDht {
             recv_sock,
             builder.read_only,
             builder.ext_addr,
+            builder.announce_port,
             handshaker,
             kill_sock,
             kill_addr,
@@ -66,14 +67,17 @@ impl MainlineDht {
     ///
     /// If the initial bootstrap has not finished, the search will be queued and executed once
     /// the bootstrap has completed.
-    pub fn search(&self, hash: InfoHash, announce: bool) {
+    pub fn search(&self, hash: InfoHash, announce: bool) ->Option<Receiver<SocketAddr>>{
+        let (tx,rx)=std::sync::mpsc::sync_channel(1);
         if self
             .send
-            .send(OneshotTask::StartLookup(hash, announce))
+            .send(OneshotTask::StartLookup(hash, announce,tx))
             .is_err()
         {
             warn!("bittorrent-protocol_dht: MainlineDht failed to send a start lookup message...");
-        }
+            return None;
+        };
+        Some(rx)
     }
 
     /// An event Receiver which will receive events occuring within the DHT.
@@ -121,6 +125,7 @@ pub struct DhtBuilder {
     read_only: bool,
     src_addr: SocketAddr,
     ext_addr: Option<SocketAddr>,
+    announce_port: Option<u16>,
 }
 
 impl DhtBuilder {
@@ -135,6 +140,7 @@ impl DhtBuilder {
             read_only: true,
             src_addr: net::default_route_v4(),
             ext_addr: None,
+            announce_port:None,
         }
     }
 
@@ -199,6 +205,12 @@ impl DhtBuilder {
     /// If this is not supplied we will use the OS default route.
     pub fn set_source_addr(mut self, addr: SocketAddr) -> DhtBuilder {
         self.src_addr = addr;
+
+        self
+    }
+
+    pub fn set_announce_port(mut self, port: u16) -> DhtBuilder {
+        self.announce_port = Some(port);
 
         self
     }

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, SocketAddrV4};
+use std::sync::mpsc::SyncSender;
 
 use mio::{EventLoop, Timeout};
 
@@ -37,7 +38,6 @@ type DistanceToBeat = ShaHash;
 #[derive(Debug, PartialEq, Eq)]
 pub enum LookupStatus {
     Searching,
-    Values(Vec<SocketAddrV4>),
     Completed,
     Failed,
 }
@@ -59,6 +59,7 @@ pub struct TableLookup {
     // Storing whether or not it has ever been pinged so that we
     // can perform the brute force lookup if the lookup failed
     all_sorted_nodes: Vec<(Distance, Node, bool)>,
+    tx: SyncSender<SocketAddr>,
 }
 
 // Gather nodes
@@ -71,6 +72,7 @@ impl TableLookup {
         will_announce: bool,
         table: &RoutingTable,
         out: &Socket,
+        tx: SyncSender<SocketAddr>,
         event_loop: &mut EventLoop<DhtHandler<H>>,
     ) -> Option<TableLookup>
     where
@@ -110,6 +112,7 @@ impl TableLookup {
             announce_tokens: HashMap::new(),
             requested_nodes: HashSet::new(),
             active_lookups: HashMap::with_capacity(INITIAL_PICK_NUM),
+            tx: tx,
         };
 
         // Call start_request_round with the list of initial_nodes (return even if the search completed...for now :D)
@@ -164,9 +167,9 @@ impl TableLookup {
             CompactInfoType::Nodes(n) => (None, Some(n)),
             CompactInfoType::Values(v) => {
                 self.recv_values = true;
-                (Some(v.into_iter().collect()), None)
+                (Some(v.into_iter().collect::<Vec<SocketAddrV4>>()), None)
             }
-            CompactInfoType::Both(n, v) => (Some(v.into_iter().collect()), Some(n)),
+            CompactInfoType::Both(n, v) => (Some(v.into_iter().collect::<Vec<SocketAddrV4>>()), Some(n)),
         };
 
         // Check if we beat the distance, get the next distance to beat
@@ -254,10 +257,14 @@ impl TableLookup {
             }
         }
 
-        match opt_values {
-            Some(values) => LookupStatus::Values(values),
-            None => self.current_lookup_status(),
+        if let Some(values) = opt_values {
+            for v4_addr in values {
+                let sock_addr = SocketAddr::V4(v4_addr);
+                self.tx.send(sock_addr);
+            }
         }
+
+        self.current_lookup_status()
     }
 
     pub fn recv_timeout<H>(
@@ -292,13 +299,14 @@ impl TableLookup {
     pub fn recv_finished(
         &mut self,
         handshake_port: u16,
+        announce_port: Option<u16>,
         table: &RoutingTable,
         out: &Socket,
     ) -> LookupStatus {
         let mut fatal_error = false;
 
         // Announce if we were told to
-        if self.will_announce {
+        if self.will_announce && announce_port.is_some(){
             // Partial borrow so the filter function doesnt capture all of self
             let announce_tokens = &self.announce_tokens;
 
@@ -316,7 +324,7 @@ impl TableLookup {
                     self.table_id,
                     self.target_id,
                     token.as_ref(),
-                    ConnectPort::Explicit(handshake_port),
+                    ConnectPort::Explicit(announce_port.unwrap()),
                 );
                 let announce_peer_msg = announce_peer_req.encode();
 

@@ -27,6 +27,7 @@ fn main() {
             Ipv4Addr::new(0, 0, 0, 0),
             6889,
         )))
+        .set_announce_port(5432)
         .set_read_only(false)
         .start_mainline(handshaker)
         .unwrap();
@@ -47,11 +48,19 @@ fn main() {
     let stdin = io::stdin();
     let stdin_lock = stdin.lock();
     for byte in stdin_lock.bytes() {
-        match &[byte.unwrap()] {
+       let rx= match &[byte.unwrap()] {
             b"a" => dht.search(hash.into(), true),
             b"s" => dht.search(hash.into(), false),
-            _ => (),
-        }
+            _ => None,
+        };
+
+       if let Some(rx) = rx {
+           let mut total = 0;
+           for addr in rx.recv() {
+               total += 1;
+               println!("Received new peer {:?}, total unique peers {:?}",addr,total);
+           }
+       }
     }
 }
 

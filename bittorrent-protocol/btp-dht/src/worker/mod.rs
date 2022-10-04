@@ -1,6 +1,7 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc;
+use std::sync::mpsc::SyncSender;
 
 use mio;
 
@@ -28,7 +29,7 @@ pub enum OneshotTask {
     /// Load a new bootstrap operation into worker storage.
     StartBootstrap(Vec<Router>, Vec<SocketAddr>),
     /// Start a lookup for the given InfoHash.
-    StartLookup(InfoHash, bool),
+    StartLookup(InfoHash, bool,SyncSender<SocketAddr>),
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
 }
@@ -75,6 +76,7 @@ pub fn start_mainline_dht<H>(
     recv_socket: UdpSocket,
     read_only: bool,
     _: Option<SocketAddr>,
+    announce_port: Option<u16>,
     handshaker: H,
     kill_sock: UdpSocket,
     kill_addr: SocketAddr,
@@ -89,6 +91,7 @@ where
         routing_table,
         send_socket,
         read_only,
+        announce_port,
         handshaker,
         kill_sock,
         kill_addr,

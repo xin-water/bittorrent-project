@@ -55,6 +55,7 @@ pub fn create_dht_handler<H>(
    // out: SyncSender<(Vec<u8>, SocketAddr)>,
     socket: Socket,
     read_only: bool,
+    announce_port: Option<u16>,
     handshaker: H,
     kill_sock: UdpSocket,
     kill_addr: SocketAddr,
@@ -62,7 +63,7 @@ pub fn create_dht_handler<H>(
 where
     H: Handshaker + 'static,
 {
-    let mut handler = DhtHandler::new(table,socket, read_only, handshaker);
+    let mut handler = DhtHandler::new(table,socket, read_only, announce_port,handshaker);
     let mut event_loop = EventLoop::new()?;
 
     let loop_channel = event_loop.channel();
@@ -109,7 +110,7 @@ enum TableAction {
 /// Actions that we want to perform on our RoutingTable after bootstrapping finishes.
 enum PostBootstrapAction {
     /// Future lookup action.
-    Lookup(InfoHash, bool),
+    Lookup(InfoHash, bool, SyncSender<SocketAddr>),
     /// Future refresh action.
     Refresh(TableRefresh, TransactionID),
 }
@@ -124,6 +125,7 @@ pub struct DhtHandler<H> {
 /// to table actions while still being able to pass around the bulky parameters.
 struct DetachedDhtHandler<H> {
     read_only: bool,
+    announce_port: Option<u16>,
     handshaker: H,
    // out_channel: SyncSender<(Vec<u8>, SocketAddr)>,
     socket: Socket,
@@ -147,6 +149,7 @@ where
         //out: SyncSender<(Vec<u8>, SocketAddr)>,
         socket: Socket,
         read_only: bool,
+        announce_port: Option<u16>,
         handshaker: H,
     ) -> DhtHandler<H> {
         let mut aid_generator = AIDGenerator::new();
@@ -162,6 +165,7 @@ where
 
         let detached = DetachedDhtHandler {
             read_only: read_only,
+            announce_port: announce_port,
             handshaker: handshaker,
            // out_channel: out,
             socket: socket,
@@ -199,13 +203,14 @@ where
             OneshotTask::StartBootstrap(routers, nodes) => {
                 handle_start_bootstrap(self, event_loop, routers, nodes);
             }
-            OneshotTask::StartLookup(info_hash, should_announce) => {
+            OneshotTask::StartLookup(info_hash, should_announce,tx) => {
                 handle_start_lookup(
                     &mut self.table_actions,
                     &mut self.detached,
                     event_loop,
                     info_hash,
                     should_announce,
+                    tx,
                 );
             }
             OneshotTask::Shutdown(cause) => {
@@ -301,13 +306,14 @@ fn broadcast_bootstrap_completed<H>(
     let mut future_actions = work_storage.future_actions.split_off(0);
     for table_action in future_actions.drain(..) {
         match table_action {
-            PostBootstrapAction::Lookup(info_hash, should_announce) => {
+            PostBootstrapAction::Lookup(info_hash, should_announce,tx) => {
                 handle_start_lookup(
                     table_actions,
                     work_storage,
                     event_loop,
                     info_hash,
                     should_announce,
+                    tx
                 );
             }
             PostBootstrapAction::Refresh(refresh, trans_id) => {
@@ -405,7 +411,7 @@ fn handle_incoming<H>(
             Some(&TableAction::Refresh(_)) => ExpectedResponse::FindNode,
             Some(&TableAction::Bootstrap(_, _)) => ExpectedResponse::FindNode,
             None => {
-                error!("not find ExpectedResponse for action_id:{:?}",&trans_id.action_id);
+                error!("not find ExpectedResponse for action_id:{:?}",&trans_id.action_id());
                 ExpectedResponse::None
             },
         }
@@ -792,14 +798,6 @@ fn handle_incoming<H>(
                     LookupStatus::Failed => {
                         shutdown_event_loop(event_loop, ShutdownCause::Unspecified)
                     }
-                    LookupStatus::Values(values) => {
-                        for v4_addr in values {
-                            let sock_addr = SocketAddr::V4(v4_addr);
-                            work_storage
-                                .handshaker
-                                .connect(None, lookup.info_hash(), sock_addr);
-                        }
-                    }
                 }
             }
         }
@@ -899,6 +897,7 @@ fn handle_start_lookup<H>(
     event_loop: &mut EventLoop<DhtHandler<H>>,
     info_hash: InfoHash,
     should_announce: bool,
+    tx:SyncSender<SocketAddr>,
 ) where
     H: Handshaker,
 {
@@ -909,7 +908,7 @@ fn handle_start_lookup<H>(
         // Queue it up if we are currently bootstrapping
         work_storage
             .future_actions
-            .push(PostBootstrapAction::Lookup(info_hash, should_announce));
+            .push(PostBootstrapAction::Lookup(info_hash, should_announce,tx));
     } else {
         // Start the lookup right now if not bootstrapping
         match TableLookup::new(
@@ -919,6 +918,7 @@ fn handle_start_lookup<H>(
             should_announce,
             &work_storage.routing_table,
             &work_storage.socket,
+            tx,
             event_loop,
         ) {
             Some(lookup) => {
@@ -1116,14 +1116,6 @@ fn handle_check_lookup_timeout<H>(
         Some((LookupStatus::Failed, _)) => {
             shutdown_event_loop(event_loop, ShutdownCause::Unspecified)
         }
-        Some((LookupStatus::Values(v), info_hash)) => {
-            // Add values to handshaker
-            for v4_addr in v {
-                let sock_addr = SocketAddr::V4(v4_addr);
-
-                work_storage.handshaker.connect(None, info_hash, sock_addr);
-            }
-        }
     }
 }
 
@@ -1142,6 +1134,7 @@ fn handle_check_lookup_endgame<H>(
         Some(TableAction::Lookup(mut lookup)) => Some((
             lookup.recv_finished(
                 work_storage.handshaker.port(),
+                work_storage.announce_port,
                 &work_storage.routing_table,
                 &work_storage.socket,
             ),
@@ -1179,14 +1172,6 @@ fn handle_check_lookup_endgame<H>(
         ),
         Some((LookupStatus::Failed, _)) => {
             shutdown_event_loop(event_loop, ShutdownCause::Unspecified)
-        }
-        Some((LookupStatus::Values(v), info_hash)) => {
-            // Add values to handshaker
-            for v4_addr in v {
-                let sock_addr = SocketAddr::V4(v4_addr);
-
-                work_storage.handshaker.connect(None, info_hash, sock_addr);
-            }
         }
     }
 }
