@@ -374,6 +374,10 @@ fn handle_incoming(
     let (work_storage, table_actions) = (&mut handler.detached, &mut handler.table_actions);
 
     // Parse the buffer as a bencoded message
+    // 接受点发来的数据不一定是完整的消息，
+    // 可能是一个消息多几个数据包，或者少几个数据包，
+    // 也有可能是1号消息的尾部数据加2号消息的头部，
+    // 后期要进行完整行处理，此时先获取队列里包含的完整单条信息。
     let bencode = if let Ok(b) = Bencode::decode(buffer) {
         b
     } else {
@@ -383,25 +387,7 @@ fn handle_incoming(
 
     // Parse the bencode as a message
     // Check to make sure we issued the transaction id (or that it is still valid)
-    let message = MessageType::new(&bencode, |trans| {
-        // Check if we can interpret the response transaction id as one of ours.
-        let trans_id = if let Some(t) = TransactionID::from_bytes(trans) {
-            t
-        } else {
-            return ExpectedResponse::None;
-        };
-
-        // Match the response action id with our current actions
-        match table_actions.get(&trans_id.action_id()) {
-            Some(&TableAction::Lookup(_)) => ExpectedResponse::GetPeers,
-            Some(&TableAction::Refresh(_)) => ExpectedResponse::FindNode,
-            Some(&TableAction::Bootstrap(_, _)) => ExpectedResponse::FindNode,
-            None => {
-                error!("not find ExpectedResponse for action_id:{:?}",&trans_id.action_id());
-                ExpectedResponse::None
-            },
-        }
-    });
+    let message = MessageType::new(&bencode);
 
     // Do not process requests if we are read only
     // TODO: Add read only flags to messages we send it we are read only!
@@ -796,6 +782,13 @@ fn handle_incoming(
         //todo
         Ok(MessageType::Response(ResponseType::AnnouncePeer(_))) => {
             info!("bittorrent-protocol_dht: Received an AnnouncePeerResponse...");
+        }
+        Ok(MessageType::Response(ResponseType::Acting(a))) => {
+            info!("bittorrent-protocol_dht: Received a ActingResponse...");
+            let trans_id = TransactionID::from_bytes(a.transaction_id()).unwrap();
+            let node = Node::as_good(a.node_id(), addr);
+
+            work_storage.routing_table.add_node(node);
         }
         //todo
         Ok(MessageType::Error(e)) => {
