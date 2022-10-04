@@ -3,11 +3,17 @@ use btp_util::bt::NodeId;
 
 use crate::bencode::{Bencode, BencodeConvert, BencodeConvertError, Dictionary};
 use crate::error::{DhtError, DhtErrorKind, DhtResult};
+use crate::message::acting::ActingResponse;
 use crate::message::announce_peer::AnnouncePeerResponse;
 use crate::message::compact_info::{CompactNodeInfo, CompactValueInfo};
 use crate::message::find_node::FindNodeResponse;
 use crate::message::get_peers::GetPeersResponse;
 use crate::message::ping::PingResponse;
+
+use crate::message::RESPONSE_TYPE_KEY;
+
+use crate::message::TOKEN_KEY;
+use crate::message::NODES_KEY;
 
 pub const RESPONSE_ARGS_KEY: &'static str = "r";
 
@@ -87,12 +93,15 @@ impl<'a> BencodeConvert for ResponseValidate<'a> {
 
 // ----------------------------------------------------------------------------//
 
+//Ping与AnnouncePeer响应类型完全一致，故在不想用事务id判断类型时直接使用acting类型代替。
+
 #[allow(unused)]
 pub enum ExpectedResponse {
-    Ping,
+    //Ping,
     FindNode,
     GetPeers,
-    AnnouncePeer,
+    //AnnouncePeer,
+    Acting,
     GetData,
     PutData,
     None,
@@ -103,24 +112,40 @@ pub enum ResponseType<'a> {
     Ping(PingResponse<'a>),
     FindNode(FindNodeResponse<'a>),
     GetPeers(GetPeersResponse<'a>),
-    AnnouncePeer(AnnouncePeerResponse<'a>), /* GetData(GetDataResponse<'a>),
-                                             * PutData(PutDataResponse<'a>) */
+    AnnouncePeer(AnnouncePeerResponse<'a>),
+    Acting(ActingResponse<'a>),
+
+    /* GetData(GetDataResponse<'a>),
+     * PutData(PutDataResponse<'a>) */
 }
 
 impl<'a> ResponseType<'a> {
     pub fn from_parts(
         root: &'a dyn Dictionary<'a, Bencode<'a>>,
         trans_id: &'a [u8],
-        rsp_type: ExpectedResponse,
+        //rsp_type: ExpectedResponse,
     ) -> DhtResult<ResponseType<'a>> {
         let validate = ResponseValidate::new(trans_id);
         let rqst_root = validate.lookup_and_convert_dict(root, RESPONSE_ARGS_KEY)?;
+        let rsp_type={
+
+            if rqst_root.lookup(TOKEN_KEY.as_bytes()).is_some(){
+                ExpectedResponse::GetPeers
+            }else if  rqst_root.lookup(NODES_KEY.as_bytes()).is_some(){
+                ExpectedResponse::FindNode
+            }else {
+                ExpectedResponse::Acting
+            }
+
+        } ;
+
+
 
         match rsp_type {
-            ExpectedResponse::Ping => {
-                let ping_rsp = PingResponse::from_parts(rqst_root, trans_id)?;
-                Ok(ResponseType::Ping(ping_rsp))
-            }
+            // ExpectedResponse::Ping => {
+            //     let ping_rsp = PingResponse::from_parts(rqst_root, trans_id)?;
+            //     Ok(ResponseType::Ping(ping_rsp))
+            // }
             ExpectedResponse::FindNode => {
                 let find_node_rsp = FindNodeResponse::from_parts(rqst_root, trans_id)?;
                 Ok(ResponseType::FindNode(find_node_rsp))
@@ -129,9 +154,14 @@ impl<'a> ResponseType<'a> {
                 let get_peers_rsp = GetPeersResponse::from_parts(rqst_root, trans_id)?;
                 Ok(ResponseType::GetPeers(get_peers_rsp))
             }
-            ExpectedResponse::AnnouncePeer => {
-                let announce_peer_rsp = AnnouncePeerResponse::from_parts(rqst_root, trans_id)?;
-                Ok(ResponseType::AnnouncePeer(announce_peer_rsp))
+            // ExpectedResponse::AnnouncePeer => {
+            //     let announce_peer_rsp = AnnouncePeerResponse::from_parts(rqst_root, trans_id)?;
+            //     Ok(ResponseType::AnnouncePeer(announce_peer_rsp))
+            // }
+
+            ExpectedResponse::Acting => {
+                let acting_peer_rsp = ActingResponse::from_parts(rqst_root, trans_id)?;
+                Ok(ResponseType::Acting(acting_peer_rsp))
             }
             ExpectedResponse::GetData => {
                 unimplemented!();

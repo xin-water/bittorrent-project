@@ -16,6 +16,7 @@ pub mod announce_peer;
 pub mod find_node;
 pub mod get_peers;
 pub mod ping;
+pub(crate) mod acting;
 
 // Top level message keys
 const TRANSACTION_ID_KEY: &'static str = "t";
@@ -61,9 +62,7 @@ pub enum MessageType<'a> {
 }
 
 impl<'a> MessageType<'a> {
-    pub fn new<T>(message: &'a Bencode<'a>, trans_mapper: T) -> DhtResult<MessageType<'a>>
-    where
-        T: Fn(&[u8]) -> ExpectedResponse,
+    pub fn new(message: &'a Bencode<'a>) -> DhtResult<MessageType<'a>>
     {
         let validate = MessageValidate;
         let msg_root = validate.convert_dict(message, ROOT_ID_KEY)?;
@@ -78,8 +77,8 @@ impl<'a> MessageType<'a> {
                 Ok(MessageType::Request(rqst_msg))
             }
             RESPONSE_TYPE_KEY => {
-                let rsp_type = trans_mapper(trans_id);
-                let rsp_message = ResponseType::from_parts(msg_root, trans_id, rsp_type)?;
+                //let rsp_type = trans_mapper(trans_id);
+                let rsp_message = ResponseType::from_parts(msg_root, trans_id)?;
                 Ok(MessageType::Response(rsp_message))
             }
             ERROR_TYPE_KEY => {
