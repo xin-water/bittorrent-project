@@ -1,9 +1,12 @@
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
-use std::sync::mpsc;
-use std::sync::mpsc::SyncSender;
+use std::net::{SocketAddr};
 
+use tokio::{
+    sync::mpsc,
+    net::UdpSocket,
+};
 use mio;
+use tokio::sync::oneshot;
 
 use crate::router::Router;
 use crate::routing::table::{self, RoutingTable};
@@ -14,21 +17,20 @@ use crate::worker::socket::Socket;
 pub mod bootstrap;
 pub mod handler;
 pub mod lookup;
-pub mod messenger;
+//pub mod messenger;
 pub mod refresh;
 pub mod socket;
+pub mod timer;
 
 /// Task that our DHT will execute immediately.
 #[derive(Clone)]
 pub enum OneshotTask {
-    /// Process an incoming message from a remote node.
-    Incoming(Vec<u8>, SocketAddr),
     /// Register a sender to send DhtEvents to.
-    RegisterSender(mpsc::Sender<DhtEvent>),
+    RegisterSender(oneshot::Sender<DhtEvent>),
     /// Load a new bootstrap operation into worker storage.
     StartBootstrap(Vec<Router>, Vec<SocketAddr>),
     /// Start a lookup for the given InfoHash.
-    StartLookup(InfoHash, bool,SyncSender<SocketAddr>),
+    StartLookup(InfoHash, bool,oneshot::Sender<SocketAddr>),
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
 }
@@ -66,34 +68,4 @@ pub enum ShutdownCause {
     ClientInitiated,
     /// Cause of shutdown is not specified.
     Unspecified,
-}
-
-/// Spawns the necessary workers that make up our local DHT node and connects them via channels
-/// so that they can send and receive DHT messages.
-pub fn start_mainline_dht(
-    send_socket: Socket,
-    recv_socket: UdpSocket,
-    read_only: bool,
-    _: Option<SocketAddr>,
-    announce_port: Option<u16>,
-    kill_sock: UdpSocket,
-    kill_addr: SocketAddr,
-) -> io::Result<mio::Sender<OneshotTask>>
-
-{
-
-    // TODO: Utilize the security extension.
-    let routing_table = RoutingTable::new(table::random_node_id());
-    let message_sender = handler::create_dht_handler(
-        routing_table,
-        send_socket,
-        read_only,
-        announce_port,
-        kill_sock,
-        kill_addr,
-    )?;
-
-    messenger::create_incoming_messenger(recv_socket, message_sender.clone());
-
-    Ok(message_sender)
 }
