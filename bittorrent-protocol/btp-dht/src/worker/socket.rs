@@ -1,6 +1,7 @@
 use std::{fmt, io};
 use std::net::SocketAddr;
-use std::net::UdpSocket;
+use tokio::net::UdpSocket;
+use async_trait::async_trait;
 
 pub struct Socket( Box<dyn SocketTrait + Send + Sync + 'static>, SocketAddr);
 
@@ -12,17 +13,17 @@ impl Socket{
         Ok(Self(inner, local_addr))
     }
 
-    pub(crate) fn send(&self, bytes: &[u8], addr: SocketAddr) -> io::Result<()> {
+    pub(crate) async fn send(&self, bytes: &[u8], addr: SocketAddr) -> io::Result<()> {
         // Note: if the socket fails to send the entire buffer, then there is no point in trying to
         // send the rest (no node will attempt to reassemble two or more datagrams into a
         // meaningful message).
-        self.0.send_to(&bytes, &addr)
+        self.0.send_to(&bytes, &addr).await
     }
 
 
-    pub(crate) fn recv(&mut self) -> io::Result<(Vec<u8>, SocketAddr)> {
+    pub(crate) async fn recv(&mut self) -> io::Result<(Vec<u8>, SocketAddr)> {
         let mut buffer = vec![0u8; 1500];
-        let (size, addr) = self.0.recv_from(&mut buffer).unwrap();
+        let (size, addr) = self.0.recv_from(&mut buffer).await.unwrap();
         buffer.truncate(size);
         Ok((buffer, addr))
     }
@@ -40,21 +41,21 @@ impl Socket{
 
 }
 
-
+#[async_trait]
 pub trait SocketTrait {
-    fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<()>;
-    fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
+    async fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<()>;
+    async fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
     fn local_addr(&self) -> io::Result<SocketAddr>;
 }
 
-
+#[async_trait]
 impl SocketTrait for UdpSocket{
-    fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<()> {
+   async fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<()> {
 
         let mut bytes_sent = 0;
 
         while bytes_sent != buf.len() {
-            if let Ok(num_sent) = self.send_to(&buf[bytes_sent..], target) {
+            if let Ok(num_sent) = self.send_to(&buf[bytes_sent..], target).await {
                 bytes_sent += num_sent;
             } else {
                 // TODO: Maybe shut down in this case, will fail on every write...
@@ -71,8 +72,8 @@ impl SocketTrait for UdpSocket{
         Ok(())
     }
 
-    fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        self.recv_from(buf)
+   async fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        self.recv_from(buf).await
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
