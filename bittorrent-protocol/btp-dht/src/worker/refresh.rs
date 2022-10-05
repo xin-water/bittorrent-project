@@ -6,6 +6,7 @@ use mio::EventLoop;
 use btp_util::bt::{self, NodeId};
 
 use crate::message::find_node::FindNodeRequest;
+use crate::routing::node;
 use crate::routing::node::NodeStatus;
 use crate::routing::table::{self, RoutingTable};
 use crate::transaction::MIDGenerator;
@@ -15,6 +16,7 @@ use crate::worker::socket::Socket;
 use crate::worker::timer::Timer;
 
 const REFRESH_INTERVAL_TIMEOUT: Duration = Duration::from_millis(6000);
+const REFRESH_CONCURRENCY: usize = 4;
 
 pub enum RefreshStatus {
     /// Refresh is in progress.
@@ -36,9 +38,9 @@ impl TableRefresh {
         }
     }
 
-    pub async fn continue_refresh(
+    pub(crate) async fn continue_refresh(
         &mut self,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
     ) -> RefreshStatus
@@ -54,10 +56,15 @@ impl TableRefresh {
             self.curr_refresh_bucket
         );
         // Ping the closest questionable node
-        for node in table
+        let nodes = table
             .closest_nodes(target_id)
             .filter(|n| n.status() == NodeStatus::Questionable)
-            .take(1)
+            .filter(|n| !n.recently_requested_from())
+            .take(REFRESH_CONCURRENCY)
+            .map(|node| *node.handle())
+            .collect::<Vec<_>>();
+
+        for mut node in nodes
         {
             // Generate a transaction id for the request
             let trans_id = self.id_generator.generate();
@@ -67,7 +74,7 @@ impl TableRefresh {
             let find_node_msg = find_node_req.encode();
 
             // Send the message
-            if out.send(&find_node_msg[..], node.addr()).await.is_err() {
+            if out.send(&find_node_msg, node.addr).await.is_err() {
                 error!(
                     "bittorrent-protocol_dht: TableRefresh failed to send a refresh message to the out \
                         channel..."
@@ -76,7 +83,10 @@ impl TableRefresh {
             }
 
             // Mark that we requested from the node
-            node.local_request();
+            // Mark that we requested from the node
+            if let Some(node) = table.find_node_mut(&node) {
+                node.local_request();
+            }
         }
 
         // Generate a dummy transaction id (only the action id will be used)
