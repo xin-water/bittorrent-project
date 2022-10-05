@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::mpsc::SyncSender;
+use std::time::Duration;
+use tokio::sync::oneshot;
 
-use mio::{EventLoop, Timeout};
 
 use btp_util::bt::{self, InfoHash, NodeId};
 use btp_util::net;
@@ -17,9 +17,10 @@ use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
 use crate::worker::socket::Socket;
+use crate::worker::timer::{Timeout, Timer};
 
-const LOOKUP_TIMEOUT_MS: u64 = 1500;
-const ENDGAME_TIMEOUT_MS: u64 = 1500;
+const LOOKUP_TIMEOUT_MS: Duration = Duration::from_millis(1500);
+const ENDGAME_TIMEOUT_MS: Duration = Duration::from_millis(1500);
 
 // Currently using the aggressive variant of the standard lookup procedure.
 // https://people.kth.se/~rauljc/p2p11/jimenez2011subsecond.pdf
@@ -58,21 +59,21 @@ pub struct TableLookup {
     // Storing whether or not it has ever been pinged so that we
     // can perform the brute force lookup if the lookup failed
     all_sorted_nodes: Vec<(Distance, Node, bool)>,
-    tx: SyncSender<SocketAddr>,
+    tx: oneshot::Sender<SocketAddr>,
 }
 
 // Gather nodes
 
 impl TableLookup {
-    pub fn new(
+    pub async fn new(
         table_id: NodeId,
         target_id: InfoHash,
         id_generator: MIDGenerator,
         will_announce: bool,
         table: &RoutingTable,
         out: &Socket,
-        tx: SyncSender<SocketAddr>,
-        event_loop: &mut EventLoop<DhtHandler>,
+        tx: oneshot::Sender<SocketAddr>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> Option<TableLookup>
 
     {
@@ -114,7 +115,7 @@ impl TableLookup {
         };
 
         // Call start_request_round with the list of initial_nodes (return even if the search completed...for now :D)
-        if table_lookup.start_request_round(initial_pick_nodes_filtered, table, out, event_loop)
+        if table_lookup.start_request_round(initial_pick_nodes_filtered, table, out, timer).await
             != LookupStatus::Failed
         {
             Some(table_lookup)
@@ -127,7 +128,7 @@ impl TableLookup {
         self.target_id
     }
 
-    pub fn recv_response<'a>(
+    pub async fn recv_response<'a>(
         &mut self,
         node: Node,
         trans_id: &TransactionID,
@@ -135,7 +136,7 @@ impl TableLookup {
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
     {
         // Process the message transaction id
@@ -150,7 +151,7 @@ impl TableLookup {
 
         // Cancel the timeout (if this is not an endgame response)
         if !self.in_endgame {
-            event_loop.clear_timeout(timeout);
+            timer.cancel(timeout);
         }
 
         // Add the announce token to our list of tokens
@@ -238,7 +239,7 @@ impl TableLookup {
                     .iter()
                     .filter(|&&(_, good)| good)
                     .map(|&(ref n, _)| (n, next_dist_to_beat));
-                if self.start_request_round(filtered_nodes, table, out, event_loop)
+                if self.start_request_round(filtered_nodes, table, out, timer).await
                     == LookupStatus::Failed
                 {
                     return LookupStatus::Failed;
@@ -247,7 +248,7 @@ impl TableLookup {
 
             // If there are not more active lookups, start the endgame
             if self.active_lookups.is_empty() {
-                if self.start_endgame_round(table, out, event_loop) == LookupStatus::Failed {
+                if self.start_endgame_round(table, out, timer).await == LookupStatus::Failed {
                     return LookupStatus::Failed;
                 }
             }
@@ -263,12 +264,12 @@ impl TableLookup {
         self.current_lookup_status()
     }
 
-    pub fn recv_timeout(
+    pub async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
 
     {
@@ -282,7 +283,7 @@ impl TableLookup {
         if !self.in_endgame {
             // If there are not more active lookups, start the endgame
             if self.active_lookups.is_empty() {
-                if self.start_endgame_round(table, out, event_loop) == LookupStatus::Failed {
+                if self.start_endgame_round(table, out, timer).await == LookupStatus::Failed {
                     return LookupStatus::Failed;
                 }
             }
@@ -291,7 +292,7 @@ impl TableLookup {
         self.current_lookup_status()
     }
 
-    pub fn recv_finished(
+    pub async fn recv_finished(
         &mut self,
         announce_port: Option<u16>,
         table: &RoutingTable,
@@ -322,7 +323,7 @@ impl TableLookup {
                 );
                 let announce_peer_msg = announce_peer_req.encode();
 
-                if out.send(&announce_peer_msg[..], node.addr()).is_err() {
+                if out.send(&announce_peer_msg[..], node.addr()).await.is_err() {
                     error!(
                         "bittorrent-protocol_dht: TableLookup announce request failed to send through the out \
                             channel..."
@@ -359,13 +360,13 @@ impl TableLookup {
         }
     }
 
-    fn start_request_round<'a, I>(
+    async fn start_request_round<'a, I>(
         &mut self,
         nodes: I,
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
     where
         I: Iterator<Item = (&'a Node, DistanceToBeat)>,
@@ -378,17 +379,7 @@ impl TableLookup {
             let trans_id = self.id_generator.generate();
 
             // Try to start a timeout for the node
-            let res_timeout = event_loop.timeout_ms(
-                (0, ScheduledTask::CheckLookupTimeout(trans_id)),
-                LOOKUP_TIMEOUT_MS,
-            );
-            let timeout = if let Ok(t) = res_timeout {
-                t
-            } else {
-                error!("bittorrent-protocol_dht: Failed to set a timeout for a table lookup...");
-                return LookupStatus::Failed;
-            };
-
+            let timeout = timer.schedule_in(LOOKUP_TIMEOUT_MS,ScheduledTask::CheckLookupTimeout(trans_id));
             // Associate the transaction id with the distance the returned nodes must beat and the timeout token
             self.active_lookups
                 .insert(trans_id, (dist_to_beat, timeout));
@@ -396,7 +387,7 @@ impl TableLookup {
             // Send the message to the node
             let get_peers_msg =
                 GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-            if out.send(&get_peers_msg[..], node.addr()).is_err() {
+            if out.send(&get_peers_msg[..], node.addr()).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a lookup message through the channel...");
                 return LookupStatus::Failed;
             }
@@ -418,12 +409,12 @@ impl TableLookup {
         }
     }
 
-    fn start_endgame_round(
+    async fn start_endgame_round(
         &mut self,
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
 
     {
@@ -431,19 +422,8 @@ impl TableLookup {
         self.in_endgame = true;
 
         // Try to start a global message timeout for the endgame
-        let res_timeout = event_loop.timeout_ms(
-            (
-                0,
-                ScheduledTask::CheckLookupEndGame(self.id_generator.generate()),
-            ),
-            ENDGAME_TIMEOUT_MS,
-        );
-        let timeout = if let Ok(t) = res_timeout {
-            t
-        } else {
-            error!("bittorrent-protocol_dht: Failed to set a timeout for table lookup endgame...");
-            return LookupStatus::Failed;
-        };
+        let timeout = timer.schedule_in(ENDGAME_TIMEOUT_MS,ScheduledTask::CheckLookupEndGame(self.id_generator.generate()));
+
 
         // Request all unpinged nodes if we didnt receive any values
         if !self.recv_values {
@@ -465,7 +445,7 @@ impl TableLookup {
                 // Send the message to the node
                 let get_peers_msg =
                     GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-                if out.send(&get_peers_msg[..], node.addr()).is_err() {
+                if out.send(&get_peers_msg[..], node.addr()).await.is_err() {
                     error!("bittorrent-protocol_dht: Could not send an endgame message through the channel...");
                     return LookupStatus::Failed;
                 }
