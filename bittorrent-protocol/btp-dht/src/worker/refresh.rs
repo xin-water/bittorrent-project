@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use mio::EventLoop;
 
@@ -11,8 +12,9 @@ use crate::transaction::MIDGenerator;
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
 use crate::worker::socket::Socket;
+use crate::worker::timer::Timer;
 
-const REFRESH_INTERVAL_TIMEOUT: u64 = 6000;
+const REFRESH_INTERVAL_TIMEOUT: Duration = Duration::from_millis(6000);
 
 pub enum RefreshStatus {
     /// Refresh is in progress.
@@ -34,11 +36,11 @@ impl TableRefresh {
         }
     }
 
-    pub fn continue_refresh(
+    pub async fn continue_refresh(
         &mut self,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> RefreshStatus
 
     {
@@ -65,7 +67,7 @@ impl TableRefresh {
             let find_node_msg = find_node_req.encode();
 
             // Send the message
-            if out.send(&find_node_msg[..], node.addr()).is_err() {
+            if out.send(&find_node_msg[..], node.addr()).await.is_err() {
                 error!(
                     "bittorrent-protocol_dht: TableRefresh failed to send a refresh message to the out \
                         channel..."
@@ -81,16 +83,7 @@ impl TableRefresh {
         let trans_id = self.id_generator.generate();
 
         // Start a timer for the next refresh
-        if event_loop
-            .timeout_ms(
-                (0, ScheduledTask::CheckTableRefresh(trans_id)),
-                REFRESH_INTERVAL_TIMEOUT,
-            )
-            .is_err()
-        {
-            error!("bittorrent-protocol_dht: TableRefresh failed to set a timeout for the next refresh...");
-            return RefreshStatus::Failed;
-        }
+        timer.schedule_in(REFRESH_INTERVAL_TIMEOUT.into(),ScheduledTask::CheckTableRefresh(trans_id));
 
         self.curr_refresh_bucket += 1;
 
