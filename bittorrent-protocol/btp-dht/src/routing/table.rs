@@ -9,7 +9,7 @@ use btp_util::sha::{self, ShaHash, XorRep};
 use rand;
 
 use crate::routing::bucket::{self, Bucket};
-use crate::routing::node::{Node, NodeStatus};
+use crate::routing::node::{Node, NodeHandle, NodeStatus};
 
 pub const MAX_BUCKETS: usize = sha::SHA_HASH_LEN * 8;
 
@@ -74,6 +74,30 @@ impl RoutingTable {
             Some(BucketContents::Sorted(b)) => b.pingable_nodes().find(|n| n == &node),
             Some(BucketContents::Assorted(b)) => b.pingable_nodes().find(|n| n == &node),
             _ => None,
+        }
+    }
+
+    /// Find a mutable reference to an instance of the target node in the RoutingTable, if it
+    /// exists.
+    pub fn find_node_mut<'a>(&'a mut self, node: &'_ NodeHandle) -> Option<&'a mut Node> {
+        let bucket_index = self.bucket_index_for_node(node.id);
+        let bucket = self.buckets.get_mut(bucket_index)?;
+        bucket.pingable_nodes_mut().find(|n| n.handle() == node)
+    }
+
+    fn bucket_index_for_node(&self, node_id: NodeId) -> usize {
+        let bucket_index = leading_bit_count(self.node_id, node_id);
+
+        // Check the sorted bucket
+        if bucket_index < self.buckets.len() {
+            // Got the sorted bucket
+            bucket_index
+        } else {
+            // Grab the assorted bucket
+            self.buckets
+                .len()
+                .checked_sub(1)
+                .expect("no buckets present in RoutingTable - implementation error")
         }
     }
 

@@ -5,8 +5,9 @@ use std::cell::Cell;
 use std::fmt::{self, Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Duration, TimeZone, Utc};
+// use chrono::{DateTime, Duration, TimeZone, Utc};
 
 use btp_util::bt::NodeId;
 use btp_util::test;
@@ -22,7 +23,7 @@ use btp_util::test;
 // TODO: Should we be storing a SocketAddr instead of a SocketAddrV4?
 
 /// Maximum wait period before a node becomes questionable.
-const MAX_LAST_SEEN_MINS: i64 = 15;
+const MAX_LAST_SEEN_MINS: u64 = 15;
 
 /// Maximum number of requests before a Questionable node becomes Bad.
 const MAX_REFRESH_REQUESTS: usize = 2;
@@ -38,79 +39,115 @@ pub enum NodeStatus {
 }
 
 /// Node participating in the dht.
+#[derive(Clone,Copy)]
 pub struct Node {
-    id: NodeId,
-    addr: SocketAddr,
-    last_request: Cell<Option<DateTime<Utc>>>,
-    last_response: Cell<Option<DateTime<Utc>>>,
-    refresh_requests: Cell<usize>,
+    handle: NodeHandle,
+    last_request: Option<Instant>,
+    last_response: Option<Instant>,
+    last_local_request: Option<Instant>,
+    refresh_requests: usize,
 }
 
 impl Node {
     /// Create a new node that has recently responded to us but never requested from us.
     pub fn as_good(id: NodeId, addr: SocketAddr) -> Node {
         Node {
-            id: id,
-            addr: addr,
-            last_response: Cell::new(Some(Utc::now())),
-            last_request: Cell::new(None),
-            refresh_requests: Cell::new(0),
+            handle: NodeHandle { id, addr },
+            last_response: Some(Instant::now()),
+            last_request: None,
+            last_local_request: None,
+            refresh_requests: 0,
         }
     }
 
     /// Create a questionable node that has responded to us before but never requested from us.
     pub fn as_questionable(id: NodeId, addr: SocketAddr) -> Node {
-        let last_response_offset = Duration::minutes(MAX_LAST_SEEN_MINS);
+        let last_response_offset = Duration::from_secs(MAX_LAST_SEEN_MINS * 60);
         // TODO: Dont use test helpers in actual code!!!
-        let last_response = test::travel_into_past(last_response_offset);
+        //let last_response = test::travel_into_past(last_response_offset);
+        let last_response = Instant::now().checked_sub(last_response_offset).unwrap();
+
 
         Node {
-            id: id,
-            addr: addr,
-            last_response: Cell::new(Some(last_response)),
-            last_request: Cell::new(None),
-            refresh_requests: Cell::new(0),
+            handle: NodeHandle { id, addr },
+            last_response: Some(last_response),
+            last_request: None,
+            last_local_request: None,
+            refresh_requests: 0,
         }
     }
 
     /// Create a new node that has never responded to us or requested from us.
     pub fn as_bad(id: NodeId, addr: SocketAddr) -> Node {
         Node {
-            id: id,
-            addr: addr,
-            last_response: Cell::new(None),
-            last_request: Cell::new(None),
-            refresh_requests: Cell::new(0),
+            handle: NodeHandle { id, addr },
+            last_response: None,
+            last_request: None,
+            last_local_request: None,
+            refresh_requests: 0,
+        }
+    }
+
+    pub fn update(&mut self, other: Node) {
+        assert_eq!(self.handle, other.handle);
+
+        let self_status = self.status();
+        let other_status = other.status();
+
+        match (self_status, other_status) {
+            (NodeStatus::Good, NodeStatus::Good) => {
+                *self = Self {
+                    handle: self.handle,
+                    last_response: other.last_response,
+                    last_request: self.last_request,
+                    last_local_request: self.last_local_request,
+                    refresh_requests: 0,
+                };
+            }
+            (NodeStatus::Good, NodeStatus::Questionable) => {}
+            (NodeStatus::Good, NodeStatus::Bad) => {}
+            (NodeStatus::Questionable, NodeStatus::Good) => {
+                *self = other;
+            }
+            (NodeStatus::Questionable, NodeStatus::Questionable) => {}
+            (NodeStatus::Questionable, NodeStatus::Bad) => {}
+            (NodeStatus::Bad, NodeStatus::Good) => {
+                *self = other;
+            }
+            (NodeStatus::Bad, NodeStatus::Questionable) => {
+                *self = other;
+            }
+            (NodeStatus::Bad, NodeStatus::Bad) => {}
         }
     }
 
     /// Record that we sent the node a request.
-    pub fn local_request(&self) {
-        if self.status() != NodeStatus::Good {
-            let num_requests = self.refresh_requests.get() + 1;
+    pub fn local_request(&mut self) {
+        self.last_local_request = Some(Instant::now());
 
-            self.refresh_requests.set(num_requests);
+        if self.status() != NodeStatus::Good {
+            self.refresh_requests = self.refresh_requests.saturating_add(1);
         }
     }
 
     /// Record that the node sent us a request.
-    pub fn remote_request(&self) {
-        self.last_request.set(Some(Utc::now()));
+    pub fn remote_request(&mut self) {
+        self.last_request = Some(Instant::now());
     }
 
     /// Record that the node sent us a response.
-    pub fn remote_response(&self) {
-        self.last_response.set(Some(Utc::now()));
+    pub fn remote_response(&mut self) {
+        self.last_response = Some(Instant::now());
 
-        self.refresh_requests.set(0);
+        self.refresh_requests = 0;
     }
 
     pub fn id(&self) -> NodeId {
-        self.id
+        self.handle.id
     }
 
     pub fn addr(&self) -> SocketAddr {
-        self.addr
+        self.handle.addr
     }
 
     pub fn encode(&self) -> [u8; 26] {
@@ -120,12 +157,12 @@ impl Node {
             let mut encoded_iter = encoded.iter_mut();
 
             // Copy the node id over
-            for (src, dst) in self.id.as_ref().iter().zip(encoded_iter.by_ref()) {
+            for (src, dst) in self.handle.id.as_ref().iter().zip(encoded_iter.by_ref()) {
                 *dst = *src;
             }
 
             // Copy the ip address over
-            match self.addr {
+            match self.handle.addr {
                 SocketAddr::V4(v4) => {
                     for (src, dst) in v4.ip().octets().iter().zip(encoded_iter.by_ref()) {
                         *dst = *src;
@@ -136,7 +173,7 @@ impl Node {
         }
 
         // Copy the port over
-        let port = self.addr.port();
+        let port = self.handle.addr.port();
         encoded[24] = (port >> 8) as u8;
         encoded[25] = port as u8;
 
@@ -145,15 +182,54 @@ impl Node {
 
     /// Current status of the node.
     pub fn status(&self) -> NodeStatus {
-        let curr_time = Utc::now();
+        let curr_time = Instant::now();
 
-        match recently_responded(self, curr_time) {
-            NodeStatus::Good => return NodeStatus::Good,
-            NodeStatus::Bad => return NodeStatus::Bad,
-            NodeStatus::Questionable => (),
+        // Check if node has ever responded to us
+        let since_response = match self.last_response {
+            Some(response_time) => curr_time - response_time,
+            None => return NodeStatus::Bad,
         };
 
-        recently_requested(self, curr_time)
+        // Check if node has recently responded to us
+        if since_response < Duration::from_secs(MAX_LAST_SEEN_MINS * 60) {
+            return NodeStatus::Good;
+        }
+
+        // Check if we have request from node multiple times already without response
+        if self.refresh_requests >= MAX_REFRESH_REQUESTS {
+            return NodeStatus::Bad;
+        }
+
+        // Check if the node has recently requested from us
+        if let Some(request_time) = self.last_request {
+            let since_request = curr_time - request_time;
+
+            if since_request < Duration::from_secs(MAX_LAST_SEEN_MINS * 60) {
+                return NodeStatus::Good;
+            }
+        }
+
+        NodeStatus::Questionable
+    }
+
+    /// Is node good or questionable?
+    pub fn is_pingable(&self) -> bool {
+        // Function is moderately expensive
+        let status = self.status();
+        status == NodeStatus::Good || status == NodeStatus::Questionable
+    }
+
+    pub(crate) fn handle(&self) -> &NodeHandle {
+        &self.handle
+    }
+
+    pub fn recently_requested_from(&self) -> bool {
+        if let Some(time) = self.last_local_request {
+            // TODO: I made the 30 seconds up, seems reasonable.
+            time > Instant::now() - Duration::from_secs(30)
+        } else {
+            false
+        }
     }
 }
 
@@ -161,43 +237,37 @@ impl Eq for Node {}
 
 impl PartialEq<Node> for Node {
     fn eq(&self, other: &Node) -> bool {
-        self.id == other.id && self.addr == other.addr
+        self.handle == other.handle
     }
 }
 
 impl Hash for Node {
     fn hash<H>(&self, state: &mut H)
-    where
-        H: Hasher,
+        where
+            H: Hasher,
     {
-        self.id.hash(state);
-        self.addr.hash(state);
-    }
-}
-
-impl Clone for Node {
-    fn clone(&self) -> Node {
-        Node {
-            id: self.id,
-            addr: self.addr,
-            last_response: self.last_response.clone(),
-            last_request: self.last_request.clone(),
-            refresh_requests: self.refresh_requests.clone(),
-        }
+        self.handle.hash(state);
     }
 }
 
 impl Debug for Node {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        f.write_fmt(format_args!(
-            "Node{{ id: {:?}, addr: {:?}, last_request: {:?}, \
-                                  last_response: {:?}, refresh_requests: {:?} }}",
-            self.id,
-            self.addr,
-            self.last_request.get(),
-            self.last_response.get(),
-            self.refresh_requests.get()
-        ))
+        // f.write_fmt(format_args!(
+        //     "Node{{ id: {:?}, addr: {:?}, last_request: {:?}, \
+        //                           last_response: {:?}, refresh_requests: {:?} }}",
+        //     self.id,
+        //     self.addr,
+        //     self.last_request.get(),
+        //     self.last_response.get(),
+        //     self.refresh_requests.get()
+        // ))
+        f.debug_struct("Node")
+            .field("id", &self.handle.id)
+            .field("addr", &self.handle.addr)
+            .field("last_request", &self.last_request)
+            .field("last_response", &self.last_response)
+            .field("refresh_requests", &self.refresh_requests)
+            .finish()
     }
 }
 
@@ -210,44 +280,65 @@ impl Debug for Node {
 ///
 /// Returns the status of the node where a Questionable status means the node has responded
 /// to us before, but not recently.
-fn recently_responded(node: &Node, curr_time: DateTime<Utc>) -> NodeStatus {
-    // Check if node has ever responded to us
-    let since_response = match node.last_response.get() {
-        Some(response_time) => curr_time - response_time,
-        None => return NodeStatus::Bad,
-    };
 
-    // Check if node has recently responded to us
-    let max_last_response = Duration::minutes(MAX_LAST_SEEN_MINS);
-    if since_response < max_last_response {
-        NodeStatus::Good
-    } else {
-        NodeStatus::Questionable
-    }
-}
+// fn recently_responded(node: &Node, curr_time: DateTime<Utc>) -> NodeStatus {
+//     // Check if node has ever responded to us
+//     let since_response = match node.last_response.get() {
+//         Some(response_time) => curr_time - response_time,
+//         None => return NodeStatus::Bad,
+//     };
+//
+//     // Check if node has recently responded to us
+//     let max_last_response = Duration::minutes(MAX_LAST_SEEN_MINS);
+//     if since_response < max_last_response {
+//         NodeStatus::Good
+//     } else {
+//         NodeStatus::Questionable
+//     }
+// }
 
 /// Second scenario where a node has ever responded to one of our requests and is good if it
 /// has sent us a request recently.
 ///
 /// Returns the final status of the node given that the first scenario found the node to be
 /// Questionable.
-fn recently_requested(node: &Node, curr_time: DateTime<Utc>) -> NodeStatus {
-    let max_last_request = Duration::minutes(MAX_LAST_SEEN_MINS);
 
-    // Check if the node has recently request from us
-    if let Some(request_time) = node.last_request.get() {
-        let since_request = curr_time - request_time;
+// fn recently_requested(node: &Node, curr_time: DateTime<Utc>) -> NodeStatus {
+//     let max_last_request = Duration::minutes(MAX_LAST_SEEN_MINS);
+//
+//     // Check if the node has recently request from us
+//     if let Some(request_time) = node.last_request.get() {
+//         let since_request = curr_time - request_time;
+//
+//         if since_request < max_last_request {
+//             return NodeStatus::Good;
+//         }
+//     }
+//
+//     // Check if we have request from node multiple times already without response
+//     if node.refresh_requests.get() < MAX_REFRESH_REQUESTS {
+//         NodeStatus::Questionable
+//     } else {
+//         NodeStatus::Bad
+//     }
+//}
 
-        if since_request < max_last_request {
-            return NodeStatus::Good;
-        }
+/// Node id + its socket address.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct NodeHandle {
+    pub id: NodeId,
+    pub addr: SocketAddr,
+}
+
+impl NodeHandle {
+    pub fn new(id: NodeId, addr: SocketAddr) -> Self {
+        Self { id, addr }
     }
+}
 
-    // Check if we have request from node multiple times already without response
-    if node.refresh_requests.get() < MAX_REFRESH_REQUESTS {
-        NodeStatus::Questionable
-    } else {
-        NodeStatus::Bad
+impl Debug for NodeHandle {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{:?}@{:?}", self.id, self.addr)
     }
 }
 

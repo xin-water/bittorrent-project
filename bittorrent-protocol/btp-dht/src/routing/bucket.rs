@@ -49,6 +49,11 @@ impl Bucket {
         PingableNodes::new(&self.nodes)
     }
 
+    /// Iterator over all good nodes and questionable nodes in the bucket that allos modifying the
+    /// nodes.
+    pub fn pingable_nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
+        self.nodes.iter_mut().filter(|node| node.is_pingable())
+    }
     /// Iterator over each node within the bucket.
     ///
     /// For buckets newly created, the initial bad nodes are included.
