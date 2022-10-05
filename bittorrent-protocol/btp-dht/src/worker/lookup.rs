@@ -65,7 +65,7 @@ pub struct TableLookup {
 // Gather nodes
 
 impl TableLookup {
-    pub async fn new(
+    pub(crate) async fn new(
         table_id: NodeId,
         target_id: InfoHash,
         id_generator: MIDGenerator,
@@ -128,7 +128,7 @@ impl TableLookup {
         self.target_id
     }
 
-    pub async fn recv_response<'a>(
+    pub(crate) async fn recv_response<'a>(
         &mut self,
         node: Node,
         trans_id: &TransactionID,
@@ -264,7 +264,7 @@ impl TableLookup {
         self.current_lookup_status()
     }
 
-    pub async fn recv_timeout(
+    pub(crate) async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
         table: &mut RoutingTable,
