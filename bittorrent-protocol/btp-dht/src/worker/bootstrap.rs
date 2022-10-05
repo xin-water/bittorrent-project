@@ -1,7 +1,6 @@
-use mio::{EventLoop, Timeout};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use log::error;
+use std::time::Duration;
 
 use crate::message::find_node::FindNodeRequest;
 use crate::routing::bucket::Bucket;
@@ -12,9 +11,10 @@ use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
 use btp_util::bt::{self, NodeId};
 use crate::worker::socket::Socket;
+use crate::worker::timer::{Timeout, Timer};
 
-const BOOTSTRAP_INITIAL_TIMEOUT: u64 = 2500;
-const BOOTSTRAP_NODE_TIMEOUT: u64 = 500;
+const BOOTSTRAP_INITIAL_TIMEOUT: Duration = Duration::from_millis(2500);
+const BOOTSTRAP_NODE_TIMEOUT: Duration = Duration::from_millis(500);
 
 const BOOTSTRAP_PINGS_PER_BUCKET: usize = 8;
 
@@ -61,11 +61,10 @@ impl TableBootstrap {
         }
     }
 
-    pub fn start_bootstrap(
+    pub async fn start_bootstrap(
         &mut self,
         out: &Socket,
-        // out: &SyncSender<(Vec<u8>, SocketAddr)>,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
     {
@@ -77,19 +76,7 @@ impl TableBootstrap {
         let trans_id = self.id_generator.generate();
 
         // Set a timer to begin the actual bootstrap
-        let res_timeout = event_loop.timeout_ms(
-            (
-                BOOTSTRAP_INITIAL_TIMEOUT,
-                ScheduledTask::CheckBootstrapTimeout(trans_id),
-            ),
-            BOOTSTRAP_INITIAL_TIMEOUT,
-        );
-        let timeout = if let Ok(t) = res_timeout {
-            t
-        } else {
-            error!("bittorrent-protocol_dht: Failed to set a timeout for the start of a table bootstrap...");
-            return BootstrapStatus::Failed;
-        };
+        let timeout = timer.schedule_in(BOOTSTRAP_INITIAL_TIMEOUT,ScheduledTask::CheckBootstrapTimeout(trans_id));
 
         // Insert the timeout into the active bootstraps just so we can check if a response was valid (and begin the bucket bootstraps)
         self.active_messages.insert(trans_id, timeout);
@@ -102,7 +89,7 @@ impl TableBootstrap {
             .iter()
             .chain(self.starting_nodes.iter())
         {
-            if out.send(&find_node_msg[..], *addr).is_err() {
+            if out.send(&find_node_msg[..], *addr).await.is_err() {
                 error!("bittorrent-protocol_dht: Failed to send bootstrap message to router through channel...");
                 return BootstrapStatus::Failed;
             }
@@ -115,13 +102,13 @@ impl TableBootstrap {
         self.starting_routers.contains(&addr)
     }
 
-    pub fn recv_response<'a>(
+    pub async fn recv_response<'a>(
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
     {
@@ -140,7 +127,7 @@ impl TableBootstrap {
         if self.curr_bootstrap_bucket != 0 {
             // Message was not from the initial ping
             // Remove the timeout from the event loop
-            event_loop.clear_timeout(timeout);
+            timer.cancel(timeout);
 
             // Remove the token from the mapping
             self.active_messages.remove(trans_id);
@@ -148,18 +135,18 @@ impl TableBootstrap {
 
         // Check if we need to bootstrap on the next bucket
         if self.active_messages.is_empty() {
-            return self.bootstrap_next_bucket(table, out, event_loop);
+            return self.bootstrap_next_bucket(table, out, timer).await;
         }
 
         self.current_bootstrap_status()
     }
 
-    pub fn recv_timeout(
+    pub async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
     {
@@ -172,18 +159,18 @@ impl TableBootstrap {
 
         // Check if we need to bootstrap on the next bucket
         if self.active_messages.is_empty() {
-            return self.bootstrap_next_bucket(table, out, event_loop);
+            return self.bootstrap_next_bucket(table, out, timer).await;
         }
 
         self.current_bootstrap_status()
     }
 
     // Returns true if there are more buckets to bootstrap, false otherwise
-    fn bootstrap_next_bucket(
+    async fn bootstrap_next_bucket(
         &mut self,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
     {
@@ -195,7 +182,7 @@ impl TableBootstrap {
                 .closest_nodes(target_id)
                 .filter(|n| n.status() == NodeStatus::Questionable);
 
-            self.send_bootstrap_requests(iter, target_id, table, out, event_loop)
+            self.send_bootstrap_requests(iter, target_id, table, out, timer).await
         } else {
             let mut buckets = table.buckets().skip(self.curr_bootstrap_bucket - 2);
             let dummy_bucket = Bucket::new();
@@ -238,17 +225,17 @@ impl TableBootstrap {
                 .chain(percent_100_bucket)
                 .filter(|n| n.status() == NodeStatus::Questionable);
 
-            self.send_bootstrap_requests(iter, target_id, table, out, event_loop)
+            self.send_bootstrap_requests(iter, target_id, table, out, timer).await
         }
     }
 
-    fn send_bootstrap_requests<'a, I>(
+    async fn send_bootstrap_requests<'a, I>(
         &mut self,
         nodes: I,
         target_id: NodeId,
         table: &RoutingTable,
         out: &Socket,
-        event_loop: &mut EventLoop<DhtHandler>,
+        timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
     where
         I: Iterator<Item = &'a Node>,
@@ -267,22 +254,10 @@ impl TableBootstrap {
                 FindNodeRequest::new(trans_id.as_ref(), self.table_id, target_id).encode();
 
             // Add a timeout for the node
-            let res_timeout = event_loop.timeout_ms(
-                (
-                    BOOTSTRAP_NODE_TIMEOUT,
-                    ScheduledTask::CheckBootstrapTimeout(trans_id),
-                ),
-                BOOTSTRAP_NODE_TIMEOUT,
-            );
-            let timeout = if let Ok(t) = res_timeout {
-                t
-            } else {
-                error!("bittorrent-protocol_dht: Failed to set a timeout for the start of a table bootstrap...");
-                return BootstrapStatus::Failed;
-            };
+            let timeout = timer.schedule_in(BOOTSTRAP_NODE_TIMEOUT,ScheduledTask::CheckBootstrapTimeout(trans_id));
 
             // Send the message to the node
-            if out.send(&find_node_msg[..], node.addr()).is_err() {
+            if out.send(&find_node_msg[..], node.addr()).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a bootstrap message through the channel...");
                 return BootstrapStatus::Failed;
             }
@@ -300,7 +275,7 @@ impl TableBootstrap {
         if self.curr_bootstrap_bucket == table::MAX_BUCKETS {
             return BootstrapStatus::Completed;
         } else if messages_sent == 0 {
-            self.bootstrap_next_bucket(table, out, event_loop)
+            self.bootstrap_next_bucket(table, out, timer).await
         } else {
             return BootstrapStatus::Bootstrapping;
         }
