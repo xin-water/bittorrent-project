@@ -23,14 +23,14 @@ pub mod socket;
 pub mod timer;
 
 /// Task that our DHT will execute immediately.
-#[derive(Clone)]
+// #[derive(Clone)]
 pub enum OneshotTask {
     /// Register a sender to send DhtEvents to.
-    RegisterSender(oneshot::Sender<DhtEvent>),
+    RegisterSender(mpsc::UnboundedSender<DhtEvent>),
     /// Load a new bootstrap operation into worker storage.
     StartBootstrap(Vec<Router>, Vec<SocketAddr>),
     /// Start a lookup for the given InfoHash.
-    StartLookup(InfoHash, bool,oneshot::Sender<SocketAddr>),
+    StartLookup(InfoHash, bool ,mpsc::UnboundedSender<SocketAddr>),
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
 }

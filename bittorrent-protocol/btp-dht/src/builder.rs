@@ -1,49 +1,54 @@
 use std::collections::HashSet;
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
-use std::sync::mpsc::{self, Receiver};
+use std::net::{SocketAddr};
 use log::warn;
 
-use mio::Sender;
+use tokio::{
+    sync::{mpsc,oneshot},
+    task,
+    net::UdpSocket
+};
+use tokio::sync::mpsc::Receiver;
 
 use btp_util::bt::InfoHash;
 use btp_util::net;
 
 use crate::router::Router;
+use crate::routing::table;
+use crate::routing::table::RoutingTable;
 use crate::worker::{self, DhtEvent, OneshotTask, ShutdownCause};
+use crate::worker::handler::DhtHandler;
 use crate::worker::socket::Socket;
 
 /// Maintains a Distributed Hash (Routing) Table.
 pub struct MainlineDht {
-    send: Sender<OneshotTask>,
+    send: mpsc::UnboundedSender<OneshotTask>,
 }
 
 impl MainlineDht {
     /// Start the MainlineDht with the given DhtBuilder and Handshaker.
-    fn with_builder(builder: DhtBuilder) -> io::Result<MainlineDht>
+    async fn with_builder(builder: DhtBuilder) -> io::Result<MainlineDht>
     {
-        let udp_socket = UdpSocket::bind(&builder.src_addr)?;
-        let send_socket = Socket::new(udp_socket.try_clone()?)?;
-        let recv_sock = udp_socket.try_clone()?;
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<OneshotTask>();
+
+        let udp_socket = UdpSocket::bind(&builder.src_addr).await?;
+        let socket = Socket::new(udp_socket)?;
 
 
-        let kill_sock = udp_socket.try_clone()?;
-        let kill_addr = udp_socket.local_addr()?;
-
-        let send = worker::start_mainline_dht(
-            send_socket,
-            recv_sock,
+        let table = RoutingTable::new(table::random_node_id());
+        let mut handler = DhtHandler::new(
+            table,
+            command_rx,
+            socket,
             builder.read_only,
-            builder.ext_addr,
-            builder.announce_port,
-            kill_sock,
-            kill_addr,
-        )?;
+            builder.announce_port
+        );
+
 
         let nodes: Vec<SocketAddr> = builder.nodes.into_iter().collect();
         let routers: Vec<Router> = builder.routers.into_iter().collect();
 
-        if send
+        if command_tx
             .send(OneshotTask::StartBootstrap(routers, nodes))
             .is_err()
         {
@@ -51,8 +56,9 @@ impl MainlineDht {
                 "bittorrent-protocol_dt: MainlineDht failed to send a start bootstrap message..."
             );
         }
+        task::spawn(handler.run());
 
-        Ok(MainlineDht { send: send })
+        Ok(MainlineDht { send: command_tx })
     }
 
     /// Perform a search for the given InfoHash with an optional announce on the closest nodes.
@@ -63,8 +69,8 @@ impl MainlineDht {
     ///
     /// If the initial bootstrap has not finished, the search will be queued and executed once
     /// the bootstrap has completed.
-    pub fn search(&self, hash: InfoHash, announce: bool) ->Option<Receiver<SocketAddr>>{
-        let (tx,rx)=std::sync::mpsc::sync_channel(1);
+    pub async fn search(&self, hash: InfoHash, announce: bool) ->Option<mpsc::UnboundedReceiver<SocketAddr>>{
+        let (tx,rx)= mpsc::unbounded_channel();
         if self
             .send
             .send(OneshotTask::StartLookup(hash, announce,tx))
@@ -80,8 +86,8 @@ impl MainlineDht {
     ///
     /// It is important to at least monitor the DHT for shutdown events as any calls
     /// after that event occurs will not be processed but no indication will be given.
-    pub fn events(&self) -> Receiver<DhtEvent> {
-        let (send, recv) = mpsc::channel();
+    pub fn events(&self) -> mpsc::UnboundedReceiver<DhtEvent> {
+        let (send, recv) = mpsc::unbounded_channel();
 
         if self.send.send(OneshotTask::RegisterSender(send)).is_err() {
             warn!(
@@ -212,8 +218,8 @@ impl DhtBuilder {
     }
 
     /// Start a mainline DHT with the current configuration.
-    pub fn start_mainline(self) -> io::Result<MainlineDht>
+    pub async fn start_mainline(self) -> io::Result<MainlineDht>
     {
-        MainlineDht::with_builder(self)
+        MainlineDht::with_builder(self).await
     }
 }
