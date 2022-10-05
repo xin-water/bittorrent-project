@@ -9,7 +9,8 @@ use log4rs::Config;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Start logger
     init_log();
     info!("start run .......");
@@ -25,12 +26,13 @@ fn main() {
         .set_announce_port(5432)
         .set_read_only(false)
         .start_mainline()
+        .await
         .unwrap();
 
     // Spawn a thread to listen to and report events
-    let events = dht.events();
-    thread::spawn(move || {
-        for event in events {
+    let mut events = dht.events();
+    tokio::spawn(async move{
+        for event in events.recv().await {
             println!("\nReceived Dht Event {:?}", event);
         }
     });
@@ -44,14 +46,14 @@ fn main() {
     let stdin_lock = stdin.lock();
     for byte in stdin_lock.bytes() {
        let rx= match &[byte.unwrap()] {
-            b"a" => dht.search(hash.into(), true),
-            b"s" => dht.search(hash.into(), false),
+            b"a" => dht.search(hash.into(), true).await,
+            b"s" => dht.search(hash.into(), false).await,
             _ => None,
         };
 
-       if let Some(rx) = rx {
+       if let Some(mut rx) = rx {
            let mut total = 0;
-           for addr in rx.recv() {
+           for addr in rx.recv().await {
                total += 1;
                println!("Received new peer {:?}, total unique peers {:?}",addr,total);
            }
