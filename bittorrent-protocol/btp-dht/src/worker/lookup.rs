@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::time::Duration;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 
 use btp_util::bt::{self, InfoHash, NodeId};
@@ -59,7 +59,7 @@ pub struct TableLookup {
     // Storing whether or not it has ever been pinged so that we
     // can perform the brute force lookup if the lookup failed
     all_sorted_nodes: Vec<(Distance, Node, bool)>,
-    tx: oneshot::Sender<SocketAddr>,
+    tx: mpsc::UnboundedSender<SocketAddr>,
 }
 
 // Gather nodes
@@ -70,9 +70,9 @@ impl TableLookup {
         target_id: InfoHash,
         id_generator: MIDGenerator,
         will_announce: bool,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
-        tx: oneshot::Sender<SocketAddr>,
+        tx: mpsc::UnboundedSender<SocketAddr>,
         timer: &mut Timer<ScheduledTask>,
     ) -> Option<TableLookup>
 
@@ -133,7 +133,7 @@ impl TableLookup {
         node: Node,
         trans_id: &TransactionID,
         msg: GetPeersResponse<'a>,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
@@ -267,7 +267,7 @@ impl TableLookup {
     pub async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
@@ -295,7 +295,7 @@ impl TableLookup {
     pub async fn recv_finished(
         &mut self,
         announce_port: Option<u16>,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
     ) -> LookupStatus {
         let mut fatal_error = false;
@@ -336,7 +336,7 @@ impl TableLookup {
 
                 if !fatal_error {
                     // We requested from the node, marke it down if the node is in our routing table
-                    table.find_node(node).map(|n| n.local_request());
+                    table.find_node_mut(node.handle()).map(|n| n.local_request());
                 }
             }
         }
@@ -363,7 +363,7 @@ impl TableLookup {
     async fn start_request_round<'a, I>(
         &mut self,
         nodes: I,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
@@ -396,7 +396,7 @@ impl TableLookup {
             self.requested_nodes.insert(node.clone());
 
             // Update the node in the routing table
-            table.find_node(node).map(|n| n.local_request());
+            table.find_node_mut(node.handle()).map(|n| n.local_request());
 
             messages_sent += 1;
         }
@@ -411,7 +411,7 @@ impl TableLookup {
 
     async fn start_endgame_round(
         &mut self,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
@@ -451,7 +451,7 @@ impl TableLookup {
                 }
 
                 // Mark that we requested from the node in the RoutingTable
-                table.find_node(node).map(|n| n.local_request());
+                table.find_node_mut(node.handle()).map(|n| n.local_request());
 
                 // Mark that we requested from the node
                 *req = true;
