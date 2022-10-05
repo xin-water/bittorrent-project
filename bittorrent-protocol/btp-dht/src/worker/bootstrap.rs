@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::Duration;
-
+use async_recursion::async_recursion;
 use crate::message::find_node::FindNodeRequest;
 use crate::routing::bucket::Bucket;
-use crate::routing::node::{Node, NodeStatus};
+use crate::routing::node::{Node, NodeHandle, NodeStatus};
 use crate::routing::table::{self, BucketContents, RoutingTable};
 use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::handler::DhtHandler;
@@ -17,11 +17,10 @@ const BOOTSTRAP_INITIAL_TIMEOUT: Duration = Duration::from_millis(2500);
 const BOOTSTRAP_NODE_TIMEOUT: Duration = Duration::from_millis(500);
 
 const BOOTSTRAP_PINGS_PER_BUCKET: usize = 8;
+const PINGS_PER_BUCKET: usize = 8;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BootstrapStatus {
-    /// Bootstrap has been finished.
-    Idle,
     /// Bootstrap is in progress.
     Bootstrapping,
     /// Bootstrap just finished.
@@ -37,6 +36,7 @@ pub struct TableBootstrap {
     active_messages: HashMap<TransactionID, Timeout>,
     starting_routers: HashSet<SocketAddr>,
     curr_bootstrap_bucket: usize,
+    pub(crate) is_completed: bool,
 }
 
 impl TableBootstrap {
@@ -58,10 +58,19 @@ impl TableBootstrap {
             starting_routers: router_filter,
             active_messages: HashMap::new(),
             curr_bootstrap_bucket: 0,
+            is_completed:false,
         }
     }
 
-    pub async fn start_bootstrap(
+    pub fn is_completed(&self) -> bool{
+        self.is_completed
+    }
+
+    pub fn active_messages_is_empty(&self) -> bool{
+        self.active_messages.is_empty()
+    }
+
+    pub(crate) async fn start_bootstrap(
         &mut self,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
@@ -71,6 +80,8 @@ impl TableBootstrap {
         // Reset the bootstrap state
         self.active_messages.clear();
         self.curr_bootstrap_bucket = 0;
+        self.is_completed = false;
+
 
         // Generate transaction id for the initial bootstrap messages
         let trans_id = self.id_generator.generate();
@@ -102,10 +113,10 @@ impl TableBootstrap {
         self.starting_routers.contains(&addr)
     }
 
-    pub async fn recv_response<'a>(
+    pub(crate) async fn recv_response<'a>(
         &mut self,
         trans_id: &TransactionID,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         //out: &SyncSender<(Vec<u8>, SocketAddr)>,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
@@ -141,10 +152,10 @@ impl TableBootstrap {
         self.current_bootstrap_status()
     }
 
-    pub async fn recv_timeout(
+    pub(crate) async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
@@ -166,9 +177,10 @@ impl TableBootstrap {
     }
 
     // Returns true if there are more buckets to bootstrap, false otherwise
+    #[async_recursion]
     async fn bootstrap_next_bucket(
         &mut self,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
         timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
@@ -180,9 +192,17 @@ impl TableBootstrap {
         if self.curr_bootstrap_bucket == 0 || self.curr_bootstrap_bucket == 1 {
             let iter = table
                 .closest_nodes(target_id)
-                .filter(|n| n.status() == NodeStatus::Questionable);
+                .filter(|n| n.status() == NodeStatus::Questionable)
 
-            self.send_bootstrap_requests(iter, target_id, table, out, timer).await
+                // 直接返回上面的节点引用集合会与下面函数冲突，
+                // 因为集合节点来源与表可变引用，下面也需要表可变引用，违反单一可变原则。
+                // 所以此处克隆 引用对应的节点，释放引用。
+                // 本来可以直接克隆整体，但为了性能，拆分节点对象，复制核心属性即可。
+                .take(PINGS_PER_BUCKET)
+                .map(|node| *node.handle())
+                .collect::<Vec<_>>();
+
+            self.send_bootstrap_requests(&iter, target_id, table, out, timer).await
         } else {
             let mut buckets = table.buckets().skip(self.curr_bootstrap_bucket - 2);
             let dummy_bucket = Bucket::new();
@@ -223,22 +243,26 @@ impl TableBootstrap {
             let iter = percent_25_bucket
                 .chain(percent_50_bucket)
                 .chain(percent_100_bucket)
-                .filter(|n| n.status() == NodeStatus::Questionable);
+                .filter(|n| n.status() == NodeStatus::Questionable)
 
-            self.send_bootstrap_requests(iter, target_id, table, out, timer).await
+                //作用同上
+                .take(PINGS_PER_BUCKET)
+                .map(|node| *node.handle())
+                .collect::<Vec<_>>();
+
+            self.send_bootstrap_requests(&iter, target_id, table, out, timer).await
         }
     }
 
-    async fn send_bootstrap_requests<'a, I>(
+    #[async_recursion]
+    async fn send_bootstrap_requests(
         &mut self,
-        nodes: I,
+        nodes: &[NodeHandle],
         target_id: NodeId,
-        table: &RoutingTable,
+        table: &mut RoutingTable,
         out: &Socket,
-        timer: &mut Timer<ScheduledTask>,
+        timer: &mut Timer<ScheduledTask>
     ) -> BootstrapStatus
-    where
-        I: Iterator<Item = &'a Node>,
     {
         info!(
             "bittorrent-protocol_dht: bootstrap::send_bootstrap_requests {}",
@@ -247,7 +271,7 @@ impl TableBootstrap {
 
         let mut messages_sent = 0;
 
-        for node in nodes.take(BOOTSTRAP_PINGS_PER_BUCKET) {
+        for node in nodes {
             // Generate a transaction id
             let trans_id = self.id_generator.generate();
             let find_node_msg =
@@ -257,13 +281,15 @@ impl TableBootstrap {
             let timeout = timer.schedule_in(BOOTSTRAP_NODE_TIMEOUT,ScheduledTask::CheckBootstrapTimeout(trans_id));
 
             // Send the message to the node
-            if out.send(&find_node_msg[..], node.addr()).await.is_err() {
+            if out.send(&find_node_msg[..], node.addr).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a bootstrap message through the channel...");
                 return BootstrapStatus::Failed;
             }
 
             // Mark that we requested from the node
-            node.local_request();
+            if let Some(node) = table.find_node_mut(node) {
+                node.local_request();
+            }
 
             // Create an entry for the timeout in the map
             self.active_messages.insert(trans_id, timeout);
@@ -273,7 +299,8 @@ impl TableBootstrap {
 
         self.curr_bootstrap_bucket += 1;
         if self.curr_bootstrap_bucket == table::MAX_BUCKETS {
-            return BootstrapStatus::Completed;
+            self.is_completed = true;
+            self.current_bootstrap_status()
         } else if messages_sent == 0 {
             self.bootstrap_next_bucket(table, out, timer).await
         } else {
@@ -282,8 +309,8 @@ impl TableBootstrap {
     }
 
     fn current_bootstrap_status(&self) -> BootstrapStatus {
-        if self.curr_bootstrap_bucket == table::MAX_BUCKETS || self.active_messages.is_empty() {
-            BootstrapStatus::Idle
+        if self.is_completed && self.active_messages.is_empty() {
+            BootstrapStatus::Completed
         } else {
             BootstrapStatus::Bootstrapping
         }
