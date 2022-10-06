@@ -387,16 +387,17 @@ impl DhtHandler
         for table_action in future_actions.drain(..) {
             match table_action {
                 PostBootstrapAction::Lookup(info_hash, should_announce,tx) => {
+                    log::trace!("start future_actions  Lookup info_hash:{:?}",&info_hash);
                     self.handle_start_lookup(
                         info_hash,
                         should_announce,
                         tx
-                    );
+                    ).await;
                 }
                 PostBootstrapAction::Refresh(refresh, trans_id) => {
                     self.table_actions.insert(trans_id.action_id(), TableAction::Refresh(refresh));
-
-                    self.handle_check_table_refresh(trans_id);
+                    log::trace!("start future_actions  Refresh action_id:{:?},trans_id:{:?}",&trans_id.action_id(),&trans_id);
+                    self.handle_check_table_refresh(trans_id).await;
                 }
             }
         }
