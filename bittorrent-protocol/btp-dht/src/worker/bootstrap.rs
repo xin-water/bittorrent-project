@@ -105,7 +105,7 @@ impl TableBootstrap {
                 return BootstrapStatus::Failed;
             }
         }
-
+        log::trace!("to router send find nood on bootstrap trans_id :{:?} ",trans_id);
         self.current_bootstrap_status()
     }
 
