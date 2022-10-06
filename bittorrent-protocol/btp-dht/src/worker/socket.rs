@@ -22,10 +22,7 @@ impl Socket{
 
 
     pub(crate) async fn recv(&mut self) -> io::Result<(Vec<u8>, SocketAddr)> {
-        let mut buffer = vec![0u8; 1500];
-        let (size, addr) = self.0.recv_from(&mut buffer).await.unwrap();
-        buffer.truncate(size);
-        Ok((buffer, addr))
+       self.0.recv().await
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -44,10 +41,16 @@ impl Socket{
 #[async_trait]
 pub trait SocketTrait {
     async fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<()>;
-    async fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
+    async fn recv(&mut self) -> io::Result<(Vec<u8>, SocketAddr)>;
     fn local_addr(&self) -> io::Result<SocketAddr>;
 }
 
+
+
+// 将消息读取封装到接口实现中，消除站溢出bug,
+// 不明白为什么直接在接口对象上拓展后用selece宏读取会导致站溢出，
+// 可能是异步接口宏 tokio-udp 与 select宏的组合兼容问题。
+// 考虑不使用trait，想直接对具体类型进行拓展，后期看情况优化。
 #[async_trait]
 impl SocketTrait for UdpSocket{
    async fn send_to(&self, buf: &[u8], target: &SocketAddr) -> io::Result<()> {
@@ -72,8 +75,11 @@ impl SocketTrait for UdpSocket{
         Ok(())
     }
 
-   async fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        self.recv_from(buf).await
+   async fn recv(&mut self) -> io::Result<(Vec<u8>, SocketAddr)> {
+       let mut buffer = vec![0u8; 1500];
+       let (size, addr) = self.recv_from(&mut buffer).await.unwrap();
+       buffer.truncate(size);
+       Ok((buffer, addr))
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
