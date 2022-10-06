@@ -160,6 +160,8 @@ impl DhtHandler
     pub async fn run_one(&mut self){
         select! {
             command = self.command_rx.recv() => {
+
+                log::trace!("command_rx: {:?}",&command);
                 if let Some(command) = command {
                     self.handle_command(command).await
                 } else {
@@ -167,6 +169,8 @@ impl DhtHandler
                 }
             }
             message = self.detached.socket.recv() => {
+                log::trace!("message_rx: {:?}",&message);
+
                 match message {
                     Ok((buffer, addr)) =>  self.handle_incoming(&buffer, addr).await,
                     Err(error) => log::warn!("{}: Failed to receive incoming message: {}", self.ip_version(), error),
@@ -176,6 +180,7 @@ impl DhtHandler
                 // `unwrap` is OK because we checked the timer is non-empty, so it should never
                 // return `None`.
                 let token = token.unwrap();
+                log::trace!("timeout_rx: {:?}",&token);
                 self.handle_timeout(token).await
             }
         }
