@@ -24,6 +24,7 @@ pub mod timer;
 
 /// Task that our DHT will execute immediately.
 // #[derive(Clone)]
+#[derive(Debug)]
 pub enum OneshotTask {
     /// Register a sender to send DhtEvents to.
     RegisterSender(mpsc::UnboundedSender<DhtEvent>),
