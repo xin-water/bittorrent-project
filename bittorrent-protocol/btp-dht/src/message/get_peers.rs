@@ -196,7 +196,6 @@ impl<'a> GetPeersResponse<'a> {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
             message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
             message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::RESPONSE_TYPE_KEY),
-            message::REQUEST_TYPE_KEY => dht_ben_bytes!(request::GET_PEERS_TYPE_KEY),
             response::RESPONSE_ARGS_KEY => Bencode::Dict(response_args)
         })
         .encode()
