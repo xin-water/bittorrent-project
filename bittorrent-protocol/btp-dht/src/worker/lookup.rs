@@ -144,10 +144,12 @@ impl TableLookup {
             lookup
         } else {
             warn!(
-                "dht_recv_response: Received lookup node response, not in active_lookup list ..."
+                "lookup_recv_response: Received lookup node response trans_id:{:?}, not in active_lookup list ...",
+                 trans_id
             );
             return self.current_lookup_status();
         };
+        log::trace!( "lookup_recv_response: remove trans_id :{:?}",trans_id);
 
         // Cancel the timeout (if this is not an endgame response)
         if !self.in_endgame {
@@ -275,11 +277,12 @@ impl TableLookup {
     {
         if self.active_lookups.remove(trans_id).is_none() {
             warn!(
-                "dht_recv_timeout: trans_id in active_lookup list not find...."
+                "lookup_recv_timeout: trans_id:{:?} in active_lookup list not find....",
+                 trans_id
             );
             return self.current_lookup_status();
         }
-
+        log::trace!( "lookup_recv_timeout: remove trans_id :{:?}",trans_id);
         if !self.in_endgame {
             // If there are not more active lookups, start the endgame
             if self.active_lookups.is_empty() {

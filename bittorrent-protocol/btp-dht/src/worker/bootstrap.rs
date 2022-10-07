@@ -129,7 +129,8 @@ impl TableBootstrap {
             *t
         } else {
             warn!(
-                "dht_recv_response: Received bootstrap node response, not in active_messages list ..."
+                "bootstrap_recv_response: Received bootstrap node response trans_id:{:?}, not in active_messages list ...",
+                 trans_id
             );
             return self.current_bootstrap_status();
         };
@@ -143,6 +144,7 @@ impl TableBootstrap {
 
             // Remove the token from the mapping
             self.active_messages.remove(trans_id);
+            log::trace!( "bootstrap_recv_response: remove trans_id :{:?}",trans_id);
         }
 
         // Check if we need to bootstrap on the next bucket
@@ -164,10 +166,12 @@ impl TableBootstrap {
     {
         if self.active_messages.remove(trans_id).is_none() {
             warn!(
-                "dht_recv_timeout: trans_id in  active_message list not find...."
+                "bootstrap_recv_timeout: trans_id: {:?} in  active_message list not find....",
+                 trans_id
             );
             return self.current_bootstrap_status();
         }
+        log::trace!( "bootstrap_recv_timeout: remove trans_id :{:?}",trans_id);
 
         // Check if we need to bootstrap on the next bucket
         if self.active_messages.is_empty() {
