@@ -452,10 +452,7 @@ async fn handle_incoming_task(
 
 
     // Parse the buffer as a bencoded message
-    // 接受点发来的数据不一定是完整的消息，
-    // 可能是一个消息多几个数据包，或者少几个数据包，
-    // 也有可能是1号消息的尾部数据加2号消息的头部，
-    // 后期要进行完整行处理，此时先获取队列里包含的完整单条信息。
+    // udp基于不可靠有界传输，不完整会被丢弃，所以数据包一定是完整包
     let bencode = if let Ok(b) = Bencode::decode(buffer) {
         b
     } else {
