@@ -129,7 +129,7 @@ impl TableLookup {
         self.target_id
     }
 
-    pub(crate) async fn recv_response(
+    pub(crate) async fn recv_response<'a>(
         &mut self,
         node: Node,
         trans_id: &TransactionID,
@@ -275,7 +275,7 @@ impl TableLookup {
     {
         if self.active_lookups.remove(trans_id).is_none() {
             warn!(
-                "dht_recv_timeout: trans_id on active_lookup list not find...."
+                "dht_recv_timeout: trans_id in active_lookup list not find...."
             );
             return self.current_lookup_status();
         }

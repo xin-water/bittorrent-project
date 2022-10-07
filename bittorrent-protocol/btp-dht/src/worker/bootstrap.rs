@@ -129,7 +129,7 @@ impl TableBootstrap {
             *t
         } else {
             warn!(
-                "dht: Received bootstrap node response timeout, not in active_messages list ..."
+                "dht_recv_response: Received bootstrap node response, not in active_messages list ..."
             );
             return self.current_bootstrap_status();
         };
@@ -164,7 +164,7 @@ impl TableBootstrap {
     {
         if self.active_messages.remove(trans_id).is_none() {
             warn!(
-                "dht: bootstrap is response, active_message list not find...."
+                "dht_recv_timeout: trans_id in  active_message list not find...."
             );
             return self.current_bootstrap_status();
         }
