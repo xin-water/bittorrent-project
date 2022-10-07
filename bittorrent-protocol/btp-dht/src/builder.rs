@@ -16,9 +16,9 @@ use btp_util::net;
 use crate::router::Router;
 use crate::routing::table;
 use crate::routing::table::RoutingTable;
-use crate::worker::{self, DhtEvent, OneshotTask, ShutdownCause};
+use crate::worker::{self, DhtEvent, OneshotTask, ShutdownCause, start_dht};
 use crate::worker::handler::DhtHandler;
-use crate::worker::socket::Socket;
+use crate::worker::socket::DhtSocket;
 
 /// Maintains a Distributed Hash (Routing) Table.
 pub struct MainlineDht {
@@ -29,34 +29,8 @@ impl MainlineDht {
     /// Start the MainlineDht with the given DhtBuilder and Handshaker.
     async fn with_builder(builder: DhtBuilder) -> io::Result<MainlineDht>
     {
-        let (command_tx, command_rx) = mpsc::unbounded_channel::<OneshotTask>();
 
-        let udp_socket = UdpSocket::bind(&builder.src_addr).await?;
-        let socket = Socket::new(udp_socket)?;
-
-
-        let table = RoutingTable::new(table::random_node_id());
-        let mut handler = DhtHandler::new(
-            table,
-            command_rx,
-            socket,
-            builder.read_only,
-            builder.announce_port
-        );
-
-
-        let nodes: Vec<SocketAddr> = builder.nodes.into_iter().collect();
-        let routers: Vec<Router> = builder.routers.into_iter().collect();
-
-        if command_tx
-            .send(OneshotTask::StartBootstrap(routers, nodes))
-            .is_err()
-        {
-            warn!(
-                "bittorrent-protocol_dt: MainlineDht failed to send a start bootstrap message..."
-            );
-        }
-        task::spawn(handler.run());
+        let command_tx = start_dht(builder).await?;
 
         Ok(MainlineDht { send: command_tx })
     }
@@ -122,12 +96,12 @@ impl Drop for MainlineDht {
 /// Stores information for initializing a DHT.
 #[derive(Clone, Debug)]
 pub struct DhtBuilder {
-    nodes: HashSet<SocketAddr>,
-    routers: HashSet<Router>,
-    read_only: bool,
-    src_addr: SocketAddr,
+    pub(crate) nodes: HashSet<SocketAddr>,
+    pub(crate) routers: HashSet<Router>,
+    pub(crate) read_only: bool,
+    pub(crate) src_addr: SocketAddr,
     ext_addr: Option<SocketAddr>,
-    announce_port: Option<u16>,
+    pub(crate) announce_port: Option<u16>,
 }
 
 impl DhtBuilder {
