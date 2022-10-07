@@ -732,7 +732,7 @@ async fn handle_incoming_task(
 
                     _ => {
                         error!(
-                            "bittorrent-protocol_dht: Resolved a TransactionID to a FindNodeResponse..."
+                            "bittorrent-protocol_dht: Resolved a TransactionID to a FindNodeResponse no action..."
                         );
                         None
                     }
@@ -812,21 +812,7 @@ async fn handle_incoming_task(
             let opt_lookup = {
                 match table_actions.get_mut(&trans_id.action_id()) {
                     Some(&mut TableAction::Lookup(ref mut lookup)) => Some(lookup),
-                    Some(&mut TableAction::Refresh(_)) => {
-                        error!(
-                            "bittorrent-protocol_dht: Resolved a GetPeersResponse ActionID to a \
-                                TableRefresh..."
-                        );
-                        None
-                    }
-                    Some(&mut TableAction::Bootstrap(_, _)) => {
-                        error!(
-                            "bittorrent-protocol_dht: Resolved a GetPeersResponse ActionID to a \
-                                TableBootstrap..."
-                        );
-                        None
-                    }
-                    None => {
+                    _ => {
                         error!(
                             "bittorrent-protocol_dht: Resolved a TransactionID to a GetPeersResponse but no \
                                 action found..."
