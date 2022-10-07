@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use mio::EventLoop;
+use tokio::sync::mpsc::Sender;
 
 use btp_util::bt::{self, NodeId};
 
@@ -12,7 +13,7 @@ use crate::routing::table::{self, RoutingTable};
 use crate::transaction::MIDGenerator;
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
-use crate::worker::socket::Socket;
+use crate::worker::socket::DhtSocket;
 use crate::worker::timer::Timer;
 
 const REFRESH_INTERVAL_TIMEOUT: Duration = Duration::from_millis(6000);
@@ -41,7 +42,7 @@ impl TableRefresh {
     pub(crate) async fn continue_refresh(
         &mut self,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> RefreshStatus
 
@@ -64,7 +65,7 @@ impl TableRefresh {
             .map(|node| *node.handle())
             .collect::<Vec<_>>();
 
-        for mut node in nodes
+        for  node in nodes
         {
             // Generate a transaction id for the request
             let trans_id = self.id_generator.generate();
@@ -74,7 +75,7 @@ impl TableRefresh {
             let find_node_msg = find_node_req.encode();
 
             // Send the message
-            if out.send(&find_node_msg, node.addr).await.is_err() {
+            if out.send((find_node_msg, node.addr)).await.is_err() {
                 error!(
                     "bittorrent-protocol_dht: TableRefresh failed to send a refresh message to the out \
                         channel..."

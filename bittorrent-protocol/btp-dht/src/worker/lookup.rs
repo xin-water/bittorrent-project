@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc::Sender;
 
 
 use btp_util::bt::{self, InfoHash, NodeId};
@@ -16,7 +17,7 @@ use crate::routing::table::RoutingTable;
 use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
-use crate::worker::socket::Socket;
+use crate::worker::socket::DhtSocket;
 use crate::worker::timer::{Timeout, Timer};
 
 const LOOKUP_TIMEOUT_MS: Duration = Duration::from_millis(1500);
@@ -71,7 +72,7 @@ impl TableLookup {
         id_generator: MIDGenerator,
         will_announce: bool,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &mpsc::Sender<(Vec<u8>,SocketAddr)>,
         tx: mpsc::UnboundedSender<SocketAddr>,
         timer: &mut Timer<ScheduledTask>,
     ) -> Option<TableLookup>
@@ -128,14 +129,13 @@ impl TableLookup {
         self.target_id
     }
 
-    pub(crate) async fn recv_response<'a>(
+    pub(crate) async fn recv_response(
         &mut self,
         node: Node,
         trans_id: &TransactionID,
         msg: GetPeersResponse<'a>,
         table: &mut RoutingTable,
-        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
-        out: &Socket,
+        out: &Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
     {
@@ -144,7 +144,7 @@ impl TableLookup {
             lookup
         } else {
             warn!(
-                "dht: Received lookup node response timeout, not in active_lookup list ..."
+                "dht_recv_response: Received lookup node response, not in active_lookup list ..."
             );
             return self.current_lookup_status();
         };
@@ -268,14 +268,14 @@ impl TableLookup {
         &mut self,
         trans_id: &TransactionID,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &mpsc::Sender<(Vec<u8>,SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
 
     {
         if self.active_lookups.remove(trans_id).is_none() {
             warn!(
-                "dht: lookup is response, active_lookup list not find...."
+                "dht_recv_timeout: trans_id on active_lookup list not find...."
             );
             return self.current_lookup_status();
         }
@@ -296,7 +296,7 @@ impl TableLookup {
         &mut self,
         announce_port: Option<u16>,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &mpsc::Sender<(Vec<u8>,SocketAddr)>,
     ) -> LookupStatus {
         let mut fatal_error = false;
 
@@ -323,15 +323,14 @@ impl TableLookup {
                 );
                 let announce_peer_msg = announce_peer_req.encode();
 
-                if out.send(&announce_peer_msg[..], node.addr()).await.is_err() {
+                if out.send((announce_peer_msg, node.addr())).await.is_err() {
                     error!(
                         "bittorrent-protocol_dht: TableLookup announce request failed to send through the out \
                             channel..."
                     );
                     fatal_error = true;
 
-                    //  某些情况可能不是发送端口问题，所以不能直接跳出循环
-                    // break
+                    break
                 }
 
                 if !fatal_error {
@@ -364,8 +363,7 @@ impl TableLookup {
         &mut self,
         nodes: I,
         table: &mut RoutingTable,
-        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
-        out: &Socket,
+        out: &mpsc::Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
     where
@@ -387,7 +385,7 @@ impl TableLookup {
             // Send the message to the node
             let get_peers_msg =
                 GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-            if out.send(&get_peers_msg[..], node.addr()).await.is_err() {
+            if out.send((get_peers_msg, node.addr())).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a lookup message through the channel...");
                 return LookupStatus::Failed;
             }
@@ -412,8 +410,7 @@ impl TableLookup {
     async fn start_endgame_round(
         &mut self,
         table: &mut RoutingTable,
-        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
-        out: &Socket,
+        out: &mpsc::Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
 
@@ -445,7 +442,7 @@ impl TableLookup {
                 // Send the message to the node
                 let get_peers_msg =
                     GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-                if out.send(&get_peers_msg[..], node.addr()).await.is_err() {
+                if out.send((get_peers_msg, node.addr())).await.is_err() {
                     error!("bittorrent-protocol_dht: Could not send an endgame message through the channel...");
                     return LookupStatus::Failed;
                 }

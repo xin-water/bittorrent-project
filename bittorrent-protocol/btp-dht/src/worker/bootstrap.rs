@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::mpsc;
 use std::time::Duration;
 use async_recursion::async_recursion;
+use tokio::sync::mpsc::Sender;
 use crate::message::find_node::FindNodeRequest;
 use crate::routing::bucket::Bucket;
 use crate::routing::node::{Node, NodeHandle, NodeStatus};
@@ -10,7 +12,7 @@ use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
 use btp_util::bt::{self, NodeId};
-use crate::worker::socket::Socket;
+use crate::worker::socket::DhtSocket;
 use crate::worker::timer::{Timeout, Timer};
 
 const BOOTSTRAP_INITIAL_TIMEOUT: Duration = Duration::from_millis(2500);
@@ -72,7 +74,7 @@ impl TableBootstrap {
 
     pub(crate) async fn start_bootstrap(
         &mut self,
-        out: &Socket,
+        out: &Sender<(Vec<u8>,SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
@@ -100,7 +102,7 @@ impl TableBootstrap {
             .iter()
             .chain(self.starting_nodes.iter())
         {
-            if out.send(&find_node_msg[..], *addr).await.is_err() {
+            if out.send((find_node_msg.clone(), *addr)).await.is_err() {
                 error!("bittorrent-protocol_dht: Failed to send bootstrap message to router through channel...");
                 return BootstrapStatus::Failed;
             }
@@ -117,8 +119,7 @@ impl TableBootstrap {
         &mut self,
         trans_id: &TransactionID,
         table: &mut RoutingTable,
-        //out: &SyncSender<(Vec<u8>, SocketAddr)>,
-        out: &Socket,
+        out: &Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
@@ -156,7 +157,7 @@ impl TableBootstrap {
         &mut self,
         trans_id: &TransactionID,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
@@ -181,7 +182,7 @@ impl TableBootstrap {
     async fn bootstrap_next_bucket(
         &mut self,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>,
     ) -> BootstrapStatus
 
@@ -260,7 +261,7 @@ impl TableBootstrap {
         nodes: &[NodeHandle],
         target_id: NodeId,
         table: &mut RoutingTable,
-        out: &Socket,
+        out: &Sender<(Vec<u8>, SocketAddr)>,
         timer: &mut Timer<ScheduledTask>
     ) -> BootstrapStatus
     {
@@ -281,7 +282,7 @@ impl TableBootstrap {
             let timeout = timer.schedule_in(BOOTSTRAP_NODE_TIMEOUT,ScheduledTask::CheckBootstrapTimeout(trans_id));
 
             // Send the message to the node
-            if out.send(&find_node_msg[..], node.addr).await.is_err() {
+            if out.send((find_node_msg, node.addr)).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a bootstrap message through the channel...");
                 return BootstrapStatus::Failed;
             }
