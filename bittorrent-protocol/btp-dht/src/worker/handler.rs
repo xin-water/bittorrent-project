@@ -4,6 +4,7 @@ use std::future::Future;
 use std::io;
 use std::mem;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
+use std::sync::Arc;
 use std::thread;
 
 use log::Level;
@@ -16,6 +17,7 @@ use tokio::{
     select,
     sync::{mpsc, oneshot}
 };
+use tokio::sync::mpsc::Sender;
 // use crate::bencode::Bencode;
 use crate::bencode::Bencode;
 
@@ -49,7 +51,7 @@ use crate::worker::bootstrap::{BootstrapStatus, TableBootstrap};
 use crate::worker::lookup::{LookupStatus, TableLookup};
 use crate::worker::refresh::{RefreshStatus, TableRefresh};
 use crate::worker::{DhtEvent, OneshotTask, ScheduledTask, ShutdownCause};
-use crate::worker::socket::{IpVersion, Socket};
+use crate::worker::socket::{DhtSocket, IpVersion};
 use crate::worker::timer::Timer;
 
 // TODO: Update modules to use find_node on the routing table to update the status of a given node.
@@ -92,7 +94,8 @@ pub struct DhtHandler {
 /// to table actions while still being able to pass around the bulky parameters.
 struct DetachedDhtHandler {
     read_only: bool,
-    socket: Socket,
+    message_in: Arc<DhtSocket>,
+    message_out: Sender<(Vec<u8>,SocketAddr)>,
     announce_port: Option<u16>,
     token_store: TokenStore,
     aid_generator: AIDGenerator,
@@ -110,7 +113,8 @@ impl DhtHandler
     pub(crate) fn new(
         table: RoutingTable,
         command_rx: mpsc::UnboundedReceiver<OneshotTask>,
-        socket: Socket,
+        message_in: Arc<DhtSocket>,
+        message_out: Sender<(Vec<u8>,SocketAddr)>,
         read_only: bool,
         announce_port: Option<u16>,
     ) -> DhtHandler {
@@ -129,7 +133,8 @@ impl DhtHandler
         let detached = DetachedDhtHandler {
             read_only: read_only,
             announce_port: announce_port,
-            socket: socket,
+            message_in: message_in,
+            message_out: message_out,
             token_store: TokenStore::new(),
             aid_generator: aid_generator,
             bootstrapping: false,
@@ -168,7 +173,7 @@ impl DhtHandler
                     self.shutdown()
                 }
             }
-            message = self.detached.socket.recv() => {
+            message = self.detached.message_in.recv() => {
                 log::trace!("message_rx: {:?}",&message);
 
                 match message {
@@ -187,7 +192,7 @@ impl DhtHandler
     }
 
     fn ip_version(&self) ->&str{
-        match self.detached.socket.ip_version() {
+        match self.detached.message_in.ip_version() {
             IpVersion::V4 => "4",
             IpVersion::V6 => "6",
         }
@@ -297,7 +302,7 @@ impl DhtHandler
         );
 
         // Begin the bootstrap operation
-        let bootstrap_status = table_bootstrap.start_bootstrap(&work_storage.socket, timer).await;
+        let bootstrap_status = table_bootstrap.start_bootstrap(&work_storage.message_out, timer).await;
 
         work_storage.bootstrapping = true;
         self.table_actions.insert(action_id, TableAction::Bootstrap(table_bootstrap, 0));
@@ -346,7 +351,7 @@ impl DhtHandler
         } else {
 
 
-            let bootstrap_status = bootstrap.start_bootstrap(&self.detached.socket, &mut self.timer).await;
+            let bootstrap_status = bootstrap.start_bootstrap(&self.detached.message_out, &mut self.timer).await;
 
             self.table_actions.insert(trans_id.action_id(), TableAction::Bootstrap(bootstrap, attempts));
 
@@ -380,7 +385,7 @@ impl DhtHandler
         // Remove the bootstrap action from our table actions
         self.table_actions.remove(&action_id);
 
-        warn!("remove bootstrap action_id:{:?}",&action_id);
+        warn!("bootstrap_completed remove bootstrap action_id:{:?}",&action_id);
 
         // Start the post bootstrap actions.
         let mut future_actions = self.detached.future_actions.split_off(0);
@@ -426,7 +431,7 @@ impl DhtHandler
                 mid_generator,
                 should_announce,
                 &mut self.detached.routing_table,
-                &self.detached.socket,
+                &self.detached.message_out,
                 tx,
                 &mut self.timer,
             ).await {
@@ -491,7 +496,7 @@ async fn handle_incoming_task(
                 PingResponse::new(p.transaction_id(), work_storage.routing_table.node_id());
             let ping_msg = ping_rsp.encode();
 
-            if work_storage.socket.send(&ping_msg[..], addr).await.is_err() {
+            if work_storage.message_out.send((ping_msg, addr)).await.is_err() {
                 error!(
                     "bittorrent-protocol_dht: Failed to send a ping response on the out channel..."
                 );
@@ -529,7 +534,7 @@ async fn handle_incoming_task(
             if work_storage
                 // .out_channel
                 // .send((find_node_msg, addr))
-                .socket.send(&find_node_msg[..],addr)
+                .message_out.send((find_node_msg, addr))
                 .await
                 .is_err()
             {
@@ -619,7 +624,7 @@ async fn handle_incoming_task(
             if work_storage
                 // .out_channel
                 // .send((get_peers_msg, addr))
-                .socket.send(&get_peers_msg[..],addr)
+                .message_out.send((get_peers_msg, addr))
                 .await
                 .is_err()
             {
@@ -693,7 +698,7 @@ async fn handle_incoming_task(
                 .encode()
             };
 
-            if work_storage.socket.send(&response_msg[..],addr).await.is_err() {
+            if work_storage.message_out.send((response_msg, addr)).await.is_err() {
                 error!("bittorrent-protocol_dht: Failed to send an announce peer response on the out channel...");
                 self.handle_command_shutdown(ShutdownCause::Unspecified);
             }
@@ -737,7 +742,7 @@ async fn handle_incoming_task(
                     match bootstrap.recv_response(
                         &trans_id,
                         &mut work_storage.routing_table,
-                        &work_storage.socket,
+                        &work_storage.message_out,
                         timer,
                     ).await {
                         BootstrapStatus::Bootstrapping => false,
@@ -837,7 +842,7 @@ async fn handle_incoming_task(
                     &trans_id,
                     g,
                     &mut work_storage.routing_table,
-                    &work_storage.socket,
+                    &work_storage.message_out,
                     timer,
                 ).await, lookup.info_hash()) {
                     // 为什么必须要在元组里求hash,而不是到事件发布的时候求呢？
@@ -901,7 +906,7 @@ async fn handle_check_table_refresh(
     let opt_refresh_status = match self.table_actions.get_mut(&trans_id.action_id()) {
         Some(&mut TableAction::Refresh(ref mut refresh)) => Some(refresh.continue_refresh(
             &mut self.detached.routing_table,
-            &self.detached.socket,
+            &self.detached.message_out,
             &mut self.timer,
         ).await),
         _ => {
@@ -932,7 +937,7 @@ async fn handle_check_bootstrap_timeout(
                 bootstrap.recv_timeout(
                     &trans_id,
                     &mut self.detached.routing_table,
-                    &self.detached.socket,
+                    &self.detached.message_out,
                     &mut self.timer,
                 ).await),
             _ => {
@@ -989,7 +994,7 @@ async fn handle_check_lookup_timeout(
             lookup.recv_timeout(
                 &trans_id,
                 &mut work_storage.routing_table,
-                &work_storage.socket,
+                &work_storage.message_out,
                 &mut self.timer,
             ).await,
             lookup.info_hash(),
@@ -1028,7 +1033,7 @@ async fn handle_check_lookup_endgame(
             lookup.recv_finished(
                 work_storage.announce_port,
                 &mut work_storage.routing_table,
-                &work_storage.socket,
+                &work_storage.message_out,
             ).await,
             lookup.info_hash(),
         )),
