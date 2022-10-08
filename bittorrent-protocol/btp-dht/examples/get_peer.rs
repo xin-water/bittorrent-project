@@ -3,7 +3,6 @@ use btp_util::bt::InfoHash;
 use log::{info, LevelFilter};
 use std::io::{self, Read};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::thread::{self};
 use log4rs::append::console::{ConsoleAppender, Target};
 use log4rs::Config;
 use log4rs::config::{Appender, Root};
