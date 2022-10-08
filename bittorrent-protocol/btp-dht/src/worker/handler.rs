@@ -942,29 +942,25 @@ async fn handle_check_bootstrap_timeout(
         };
 
         match opt_bootstrap_info {
-            None => false,
-            Some(BootstrapStatus::Bootstrapping) => false,
             Some(BootstrapStatus::Failed) => {
                 self.handle_command_shutdown(ShutdownCause::Unspecified).await;
                 false
             }
             Some(BootstrapStatus::Completed) => {
-
-                //直接使用 bootstrap引用 会违反可变引用唯一原则
-                // self.attempt_rebootstrap(bootstrap, attempts).await
-                //     == Some(true)
-
-                if self.nood_to_less() {
-                    if let Some(TableAction::Bootstrap(bootstrap,attempts)) = self.table_actions.remove(&trans_id.action_id()){
-                        self.attempt_rebootstrap(bootstrap, attempts,&trans_id).await == Some(true)
-                    }else {
-                        false
-                    }
-
-                } else {
+                if !self.nood_to_less() {
                     true
                 }
+
+                //直接使用 上面的bootstrap引用 会违反可变引用唯一原则
+                // self.attempt_rebootstrap(bootstrap, attempts).await
+                //     == Some(true)
+                if let Some(TableAction::Bootstrap(bootstrap,attempts)) = self.table_actions.remove(&trans_id.action_id()){
+                    self.attempt_rebootstrap(bootstrap, attempts,&trans_id).await == Some(true)
+                }else {
+                    false
+                }
             }
+            _=> false,
         }
     };
 
@@ -1001,14 +997,13 @@ async fn handle_check_lookup_timeout(
     };
 
     match opt_lookup_info {
-        None => (),
-        Some((LookupStatus::Searching, _)) => (),
         Some((LookupStatus::Completed, info_hash)) => self.broadcast_dht_event(
             DhtEvent::LookupCompleted(info_hash),
         ).await,
         Some((LookupStatus::Failed, _)) => {
             self.handle_command_shutdown(ShutdownCause::Unspecified).await
         }
+        _ => (),
     }
 }
 
