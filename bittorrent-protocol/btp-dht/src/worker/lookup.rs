@@ -15,9 +15,7 @@ use crate::routing::bucket;
 use crate::routing::node::{Node, NodeStatus};
 use crate::routing::table::RoutingTable;
 use crate::transaction::{MIDGenerator, TransactionID};
-use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
-use crate::worker::socket::DhtSocket;
 use crate::worker::timer::{Timeout, Timer};
 
 const LOOKUP_TIMEOUT_MS: Duration = Duration::from_millis(1500);

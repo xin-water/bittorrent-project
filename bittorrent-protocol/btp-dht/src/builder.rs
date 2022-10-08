@@ -4,21 +4,14 @@ use std::net::{SocketAddr};
 use log::warn;
 
 use tokio::{
-    sync::{mpsc,oneshot},
-    task,
-    net::UdpSocket
+    sync::{mpsc},
 };
-use tokio::sync::mpsc::Receiver;
 
 use btp_util::bt::InfoHash;
 use btp_util::net;
 
 use crate::router::Router;
-use crate::routing::table;
-use crate::routing::table::RoutingTable;
-use crate::worker::{self, DhtEvent, OneshotTask, ShutdownCause, start_dht};
-use crate::worker::handler::DhtHandler;
-use crate::worker::socket::DhtSocket;
+use crate::worker::{DhtEvent, OneshotTask, ShutdownCause, start_dht};
 
 /// Maintains a Distributed Hash (Routing) Table.
 pub struct MainlineDht {

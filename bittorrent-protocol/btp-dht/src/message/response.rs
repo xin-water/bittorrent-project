@@ -11,7 +11,6 @@ use crate::message::get_peers::GetPeersResponse;
 use crate::message::ping::PingResponse;
 
 use crate::message::RESPONSE_TYPE_KEY;
-
 use crate::message::TOKEN_KEY;
 use crate::message::NODES_KEY;
 

@@ -1,19 +1,15 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use mio::EventLoop;
 use tokio::sync::mpsc::Sender;
 
 use btp_util::bt::{self, NodeId};
 
 use crate::message::find_node::FindNodeRequest;
-use crate::routing::node;
 use crate::routing::node::NodeStatus;
 use crate::routing::table::{self, RoutingTable};
 use crate::transaction::MIDGenerator;
-use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
-use crate::worker::socket::DhtSocket;
 use crate::worker::timer::Timer;
 
 const REFRESH_INTERVAL_TIMEOUT: Duration = Duration::from_millis(6000);

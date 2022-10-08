@@ -1,18 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::mpsc;
 use std::time::Duration;
 use async_recursion::async_recursion;
 use tokio::sync::mpsc::Sender;
 use crate::message::find_node::FindNodeRequest;
 use crate::routing::bucket::Bucket;
-use crate::routing::node::{Node, NodeHandle, NodeStatus};
+use crate::routing::node::{NodeHandle, NodeStatus};
 use crate::routing::table::{self, BucketContents, RoutingTable};
 use crate::transaction::{MIDGenerator, TransactionID};
-use crate::worker::handler::DhtHandler;
 use crate::worker::ScheduledTask;
 use btp_util::bt::{self, NodeId};
-use crate::worker::socket::DhtSocket;
 use crate::worker::timer::{Timeout, Timer};
 
 const BOOTSTRAP_INITIAL_TIMEOUT: Duration = Duration::from_millis(2500);
@@ -64,13 +61,13 @@ impl TableBootstrap {
         }
     }
 
-    pub fn is_completed(&self) -> bool{
-        self.is_completed
-    }
-
-    pub fn active_messages_is_empty(&self) -> bool{
-        self.active_messages.is_empty()
-    }
+    // pub fn is_completed(&self) -> bool{
+    //     self.is_completed
+    // }
+    //
+    // pub fn active_messages_is_empty(&self) -> bool{
+    //     self.active_messages.is_empty()
+    // }
 
     pub(crate) async fn start_bootstrap(
         &mut self,

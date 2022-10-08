@@ -2,7 +2,6 @@ use btp_util::bt::NodeId;
 use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use crate::error::DhtResult;
 use crate::message;
-use crate::message::announce_peer::AnnouncePeerResponse;
 use crate::message::request;
 use crate::message::request::RequestValidate;
 

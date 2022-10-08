@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 use std::convert::AsRef;
-use std::future::Future;
 use std::io;
-use std::mem;
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
-use std::thread;
 
 use log::Level;
 
@@ -32,14 +29,13 @@ use crate::message::find_node::FindNodeResponse;
 use crate::message::get_peers::{CompactInfoType, GetPeersResponse};
 use crate::message::ping::PingResponse;
 use crate::message::request::RequestType;
-use crate::message::response::{ExpectedResponse, ResponseType};
+use crate::message::response:: ResponseType;
 use crate::message::MessageType;
 
 use crate::router::Router;
 
 use crate::routing::node::Node;
 use crate::routing::node::NodeStatus;
-use crate::routing::table;
 use crate::routing::table::BucketContents;
 use crate::routing::table::RoutingTable;
 
@@ -500,7 +496,7 @@ async fn handle_incoming_task(
                 error!(
                     "bittorrent-protocol_dht: Failed to send a ping response on the out channel..."
                 );
-                self.handle_command_shutdown(ShutdownCause::Unspecified);
+                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
             }
         }
         Ok(MessageType::Request(RequestType::FindNode(f))) => {
@@ -539,7 +535,7 @@ async fn handle_incoming_task(
                 .is_err()
             {
                 error!("bittorrent-protocol_dht: Failed to send a find node response on the out channel...");
-                self.handle_command_shutdown(ShutdownCause::Unspecified);
+                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
             }
         }
         Ok(MessageType::Request(RequestType::GetPeers(g))) => {
@@ -629,7 +625,7 @@ async fn handle_incoming_task(
                 .is_err()
             {
                 error!("bittorrent-protocol_dht: Failed to send a get peers response on the out channel...");
-                self.handle_command_shutdown(ShutdownCause::Unspecified);
+                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
             }
         }
         Ok(MessageType::Request(RequestType::AnnouncePeer(a))) => {
@@ -700,7 +696,7 @@ async fn handle_incoming_task(
 
             if work_storage.message_out.send((response_msg, addr)).await.is_err() {
                 error!("bittorrent-protocol_dht: Failed to send an announce peer response on the out channel...");
-                self.handle_command_shutdown(ShutdownCause::Unspecified);
+                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
             }
         }
         Ok(MessageType::Response(ResponseType::FindNode(f))) => {
@@ -723,7 +719,7 @@ async fn handle_incoming_task(
                         work_storage.routing_table.add_node(node);
                         None
                     }
-                    Some(&mut TableAction::Bootstrap(ref mut bootstrap, ref mut attempts)) => {
+                    Some(&mut TableAction::Bootstrap(ref mut bootstrap, _attempts)) => {
                         if !bootstrap.is_router(&node.addr()) {
                             work_storage.routing_table.add_node(node);
                         }
@@ -855,7 +851,6 @@ async fn handle_incoming_task(
         }
         Ok(MessageType::Response(ResponseType::Acting(a))) => {
             info!("bittorrent-protocol_dht: Received a ActingResponse...");
-            let trans_id = TransactionID::from_bytes(a.transaction_id()).unwrap();
             let node = Node::as_good(a.node_id(), addr);
 
             work_storage.routing_table.add_node(node);
@@ -919,7 +914,7 @@ async fn handle_check_bootstrap_timeout(
 
     let bootstrap_complete = {
         let opt_bootstrap_info = match self.table_actions.get_mut(&trans_id.action_id()) {
-            Some(&mut TableAction::Bootstrap(ref mut bootstrap, ref mut attempts)) => Some(
+            Some(&mut TableAction::Bootstrap(ref mut bootstrap,  _attempts)) => Some(
                 bootstrap.recv_timeout(
                     &trans_id,
                     &mut self.detached.routing_table,

@@ -3,8 +3,6 @@ use std::net::{SocketAddr};
 use std::sync::Arc;
 
 use tokio::{sync::mpsc, net::UdpSocket, task};
-use mio;
-use tokio::sync::oneshot;
 
 use crate::router::Router;
 use crate::routing::table::{self, RoutingTable};
@@ -101,7 +99,7 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
 
 
     let table = RoutingTable::new(table::random_node_id());
-    let mut handler = DhtHandler::new(
+    let handler = DhtHandler::new(
         table,
         command_rx,
         dht_socket,
