@@ -21,6 +21,7 @@ use crate::bencode::Bencode;
 use btp_util::bt::InfoHash;
 use btp_util::convert;
 use btp_util::net::IpAddr;
+use crate::error::{DhtError, DhtResult};
 
 use crate::message::announce_peer::{AnnouncePeerResponse, ConnectPort};
 use crate::message::compact_info::{CompactNodeInfo, CompactValueInfo};
@@ -236,7 +237,38 @@ impl DhtHandler
     }
 
     async fn handle_incoming(&mut self, buffer: &[u8], addr: SocketAddr){
-        self.handle_incoming_task(buffer, addr).await
+
+        // 消息编码
+        // 不能抽为函数、会触发返回借用，message包含了 &bencode，
+        // 不能抽为方法、会与下面发生可变借用冲突，借用检查算法会误杀。，
+        let bencode = if let Ok(b) = Bencode::decode(buffer){
+            b
+        } else {
+            warn!("bittorrent-protocol_dht: Received invalid bencode data...");
+            return;
+        };
+        let message = MessageType::new(&bencode);
+
+        // 预处理
+        if !self.handle_incoming_preprocess(&message){
+            return;
+        }
+
+        match message{
+            Err(e) => {
+                 warn!("bittorrent-protocol_dht: Error parsing KRPC message: {:?}",e);
+             }
+             Ok(MessageType::Error(e)) => {
+                 warn!("bittorrent-protocol_dht: KRPC error message from {:?}: {:?}",addr, e);
+             }
+             Ok(MessageType::Request(request)) => {
+                 self.handle_incoming_request(request, addr).await
+             }
+             Ok(MessageType::Response(response)) => {
+                 self.handle_incoming_response(response, addr).await
+             }
+        }
+
     }
 
     async fn handle_timeout(&mut self, token: ScheduledTask){
@@ -441,437 +473,417 @@ impl DhtHandler
 
 // ----------------------------------------------------------------------------//
 
-async fn handle_incoming_task(
-    &mut self,
-    buffer: &[u8],
-    addr: SocketAddr,
-)
-{
-    let  work_storage = &mut self.detached;
-    let  table_actions = &mut self.table_actions;
-    let  timer = &mut self.timer;
+    fn handle_incoming_preprocess(&mut self, message: &DhtResult<MessageType>) -> bool {
 
+        if self.detached.read_only {
+            match message {
+                Ok(MessageType::Request(_)) =>  return false,
+                _ => (),
+            }
+        }
+        true
+    }
 
-    // Parse the buffer as a bencoded message
-    // udp基于不可靠有界传输，不完整会被丢弃，所以数据包一定是完整包
-    let bencode = if let Ok(b) = Bencode::decode(buffer) {
-        b
-    } else {
-        warn!("bittorrent-protocol_dht: Received invalid bencode data...");
-        return;
-    };
+    async fn handle_incoming_request(
+        &mut self,
+        request: RequestType<'_>,
+        addr: SocketAddr,
+    )
+    {
+        let  work_storage = &mut self.detached;
+        match request {
+            RequestType::Ping(p) => {
+                info!("bittorrent-protocol_dht: Received a PingRequest...");
+                let node = Node::as_good(p.node_id(), addr);
 
-    // Parse the bencode as a message
-    // Check to make sure we issued the transaction id (or that it is still valid)
-    let message = MessageType::new(&bencode);
+                // Node requested from us, mark it in the Routingtable
+                work_storage
+                    .routing_table
+                    .find_node_mut(&node.handle())
+                    .map(|n| n.remote_request());
 
-    // Do not process requests if we are read only
-    // TODO: Add read only flags to messages we send it we are read only!
-    // Also, check for read only flags on responses we get before adding nodes
-    // to our RoutingTable.
-    if work_storage.read_only {
-        match message {
-            Ok(MessageType::Request(_)) => return,
-            _ => (),
+                let ping_rsp =
+                    PingResponse::new(p.transaction_id(), work_storage.routing_table.node_id());
+                let ping_msg = ping_rsp.encode();
+
+                if work_storage.message_out.send((ping_msg, addr)).await.is_err() {
+                    error!(
+                        "bittorrent-protocol_dht: Failed to send a ping response on the out channel..."
+                    );
+                    self.handle_command_shutdown(ShutdownCause::Unspecified).await;
+                }
+            }
+            RequestType::FindNode(f) => {
+                info!("bittorrent-protocol_dht: Received a FindNodeRequest...");
+                let node = Node::as_good(f.node_id(), addr);
+
+                // Node requested from us, mark it in the Routingtable
+                work_storage
+                    .routing_table
+                    .find_node_mut(&node.handle())
+                    .map(|n| n.remote_request());
+
+                // Grab the closest nodes
+                let mut closest_nodes_bytes = Vec::with_capacity(26 * 8);
+                for node in work_storage
+                    .routing_table
+                    .closest_nodes(f.target_id())
+                    .take(8)
+                {
+                    closest_nodes_bytes.extend_from_slice(&node.encode());
+                }
+
+                let find_node_rsp = FindNodeResponse::new(
+                    f.transaction_id(),
+                    work_storage.routing_table.node_id(),
+                    &closest_nodes_bytes,
+                )
+                .unwrap();
+                let find_node_msg = find_node_rsp.encode();
+
+                if work_storage
+                    // .out_channel
+                    // .send((find_node_msg, addr))
+                    .message_out.send((find_node_msg, addr))
+                    .await
+                    .is_err()
+                {
+                    error!("bittorrent-protocol_dht: Failed to send a find node response on the out channel...");
+                    self.handle_command_shutdown(ShutdownCause::Unspecified).await;
+                }
+            }
+            RequestType::GetPeers(g) => {
+                info!("bittorrent-protocol_dht: Received a GetPeersRequest...");
+                let node = Node::as_good(g.node_id(), addr);
+
+                // Node requested from us, mark it in the Routingtable
+                work_storage
+                    .routing_table
+                    .find_node_mut(&node.handle())
+                    .map(|n| n.remote_request());
+
+                // TODO: Move socket address serialization code into use btp_util
+                // TODO: Check what the maximum number of values we can give without overflowing a udp packet
+                // Also, if we arent going to give all of the contacts, we may want to shuffle which ones we give
+                let mut contact_info_bytes = Vec::with_capacity(6 * 20);
+                work_storage
+                    .active_stores
+                    .find_items(&g.info_hash(), |addr| {
+                        let mut bytes = [0u8; 6];
+                        let port = addr.port();
+
+                        match addr {
+                            SocketAddr::V4(v4_addr) => {
+                                for (src, dst) in convert::ipv4_to_bytes_be(*v4_addr.ip())
+                                    .iter()
+                                    .zip(bytes.iter_mut())
+                                {
+                                    *dst = *src;
+                                }
+                            }
+                            SocketAddr::V6(_) => {
+                                error!("AnnounceStorage contained an IPv6 Address...");
+                                return;
+                            }
+                        };
+
+                        bytes[4] = (port >> 8) as u8;
+                        bytes[5] = (port & 0x00FF) as u8;
+
+                        contact_info_bytes.extend_from_slice(&bytes);
+                    });
+                // Grab the bencoded list (ugh, we really have to do this, better apis I say!!!)
+                let mut contact_info_bencode = Vec::with_capacity(contact_info_bytes.len() / 6);
+                for chunk_index in 0..(contact_info_bytes.len() / 6) {
+                    let (start, end) = (chunk_index * 6, chunk_index * 6 + 6);
+
+                    contact_info_bencode.push(dht_ben_bytes!(&contact_info_bytes[start..end]));
+                }
+
+                // Grab the closest nodes
+                let mut closest_nodes_bytes = Vec::with_capacity(26 * 8);
+                for node in work_storage
+                    .routing_table
+                    .closest_nodes(g.info_hash())
+                    .take(8)
+                {
+                    closest_nodes_bytes.extend_from_slice(&node.encode());
+                }
+
+                // Wrap up the nodes/values we are going to be giving them
+                let token = work_storage
+                    .token_store
+                    .checkout(IpAddr::from_socket_addr(addr));
+                let comapct_info_type = if !contact_info_bencode.is_empty() {
+                    CompactInfoType::Both(
+                        CompactNodeInfo::new(&closest_nodes_bytes).unwrap(),
+                        CompactValueInfo::new(&contact_info_bencode).unwrap(),
+                    )
+                } else {
+                    CompactInfoType::Nodes(CompactNodeInfo::new(&closest_nodes_bytes).unwrap())
+                };
+
+                let get_peers_rsp = GetPeersResponse::new(
+                    g.transaction_id(),
+                    work_storage.routing_table.node_id(),
+                    Some(token.as_ref()),
+                    comapct_info_type,
+                );
+                let get_peers_msg = get_peers_rsp.encode();
+
+                if work_storage
+                    // .out_channel
+                    // .send((get_peers_msg, addr))
+                    .message_out.send((get_peers_msg, addr))
+                    .await
+                    .is_err()
+                {
+                    error!("bittorrent-protocol_dht: Failed to send a get peers response on the out channel...");
+                    self.handle_command_shutdown(ShutdownCause::Unspecified).await;
+                }
+            }
+            RequestType::AnnouncePeer(a) => {
+                info!("bittorrent-protocol_dht: Received an AnnouncePeerRequest...");
+                let node = Node::as_good(a.node_id(), addr);
+
+                // Node requested from us, mark it in the Routingtable
+                work_storage
+                    .routing_table
+                    .find_node_mut(&node.handle())
+                    .map(|n| n.remote_request());
+
+                // Validate the token
+                let is_valid = match Token::new(a.token()) {
+                    Ok(t) => work_storage
+                        .token_store
+                        .checkin(IpAddr::from_socket_addr(addr), t),
+                    Err(_) => false,
+                };
+
+                // Create a socket address based on the implied/explicit port number
+                let connect_addr = match a.connect_port() {
+                    ConnectPort::Implied => addr,
+                    ConnectPort::Explicit(port) => match addr {
+                        SocketAddr::V4(v4_addr) => {
+                            SocketAddr::V4(SocketAddrV4::new(*v4_addr.ip(), port))
+                        }
+                        SocketAddr::V6(v6_addr) => SocketAddr::V6(SocketAddrV6::new(
+                            *v6_addr.ip(),
+                            port,
+                            v6_addr.flowinfo(),
+                            v6_addr.scope_id(),
+                        )),
+                    },
+                };
+
+                // Resolve type of response we are going to send
+                let response_msg = if !is_valid {
+                    // Node gave us an invalid token
+                    warn!("bittorrent-protocol_dht: Remote node sent us an invalid token for an AnnounceRequest...");
+                    ErrorMessage::new(
+                        a.transaction_id().to_vec(),
+                        ErrorCode::ProtocolError,
+                        "Received An Invalid Token".to_owned(),
+                    )
+                    .encode()
+                } else if work_storage
+                    .active_stores
+                    .add_item(a.info_hash(), connect_addr)
+                {
+                    // Node successfully stored the value with us, send an announce response
+                    AnnouncePeerResponse::new(a.transaction_id(), work_storage.routing_table.node_id())
+                        .encode()
+                } else {
+                    // Node unsuccessfully stored the value with us, send them an error message
+                    // TODO: Spec doesnt actually say what error message to send, or even if we should send one...
+                    warn!(
+                        "bittorrent-protocol_dht: AnnounceStorage failed to store contact information because it \
+                           is full..."
+                    );
+                    ErrorMessage::new(
+                        a.transaction_id().to_vec(),
+                        ErrorCode::ServerError,
+                        "Announce Storage Is Full".to_owned(),
+                    )
+                    .encode()
+                };
+
+                if work_storage.message_out.send((response_msg, addr)).await.is_err() {
+                    error!("bittorrent-protocol_dht: Failed to send an announce peer response on the out channel...");
+                    self.handle_command_shutdown(ShutdownCause::Unspecified).await;
+                }
+            }
         }
     }
 
-    // Process the given message
-    match message {
-        Ok(MessageType::Request(RequestType::Ping(p))) => {
-            info!("bittorrent-protocol_dht: Received a PingRequest...");
-            let node = Node::as_good(p.node_id(), addr);
 
-            // Node requested from us, mark it in the Routingtable
-            work_storage
-                .routing_table
-                .find_node_mut(&node.handle())
-                .map(|n| n.remote_request());
+    async fn handle_incoming_response(
+        &mut self,
+        response: ResponseType<'_>,
+        addr: SocketAddr,
+    )
+    {
+        let  work_storage = &mut self.detached;
+        let  table_actions = &mut self.table_actions;
+        let  timer = &mut self.timer;
 
-            let ping_rsp =
-                PingResponse::new(p.transaction_id(), work_storage.routing_table.node_id());
-            let ping_msg = ping_rsp.encode();
+        match response {
+            ResponseType::FindNode(f) => {
+                info!("bittorrent-protocol_dht: Received a FindNodeResponse...");
+                let trans_id = TransactionID::from_bytes(f.transaction_id()).unwrap();
+                let node = Node::as_good(f.node_id(), addr);
 
-            if work_storage.message_out.send((ping_msg, addr)).await.is_err() {
-                error!(
-                    "bittorrent-protocol_dht: Failed to send a ping response on the out channel..."
-                );
-                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
-            }
-        }
-        Ok(MessageType::Request(RequestType::FindNode(f))) => {
-            info!("bittorrent-protocol_dht: Received a FindNodeRequest...");
-            let node = Node::as_good(f.node_id(), addr);
+                // Add the payload nodes as questionable
+                for (id, v4_addr) in f.nodes() {
+                    let sock_addr = SocketAddr::V4(v4_addr);
 
-            // Node requested from us, mark it in the Routingtable
-            work_storage
-                .routing_table
-                .find_node_mut(&node.handle())
-                .map(|n| n.remote_request());
+                    work_storage
+                        .routing_table
+                        .add_node(Node::as_questionable(id, sock_addr));
+                }
 
-            // Grab the closest nodes
-            let mut closest_nodes_bytes = Vec::with_capacity(26 * 8);
-            for node in work_storage
-                .routing_table
-                .closest_nodes(f.target_id())
-                .take(8)
-            {
-                closest_nodes_bytes.extend_from_slice(&node.encode());
-            }
-
-            let find_node_rsp = FindNodeResponse::new(
-                f.transaction_id(),
-                work_storage.routing_table.node_id(),
-                &closest_nodes_bytes,
-            )
-            .unwrap();
-            let find_node_msg = find_node_rsp.encode();
-
-            if work_storage
-                // .out_channel
-                // .send((find_node_msg, addr))
-                .message_out.send((find_node_msg, addr))
-                .await
-                .is_err()
-            {
-                error!("bittorrent-protocol_dht: Failed to send a find node response on the out channel...");
-                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
-            }
-        }
-        Ok(MessageType::Request(RequestType::GetPeers(g))) => {
-            info!("bittorrent-protocol_dht: Received a GetPeersRequest...");
-            let node = Node::as_good(g.node_id(), addr);
-
-            // Node requested from us, mark it in the Routingtable
-            work_storage
-                .routing_table
-                .find_node_mut(&node.handle())
-                .map(|n| n.remote_request());
-
-            // TODO: Move socket address serialization code into use btp_util
-            // TODO: Check what the maximum number of values we can give without overflowing a udp packet
-            // Also, if we arent going to give all of the contacts, we may want to shuffle which ones we give
-            let mut contact_info_bytes = Vec::with_capacity(6 * 20);
-            work_storage
-                .active_stores
-                .find_items(&g.info_hash(), |addr| {
-                    let mut bytes = [0u8; 6];
-                    let port = addr.port();
-
-                    match addr {
-                        SocketAddr::V4(v4_addr) => {
-                            for (src, dst) in convert::ipv4_to_bytes_be(*v4_addr.ip())
-                                .iter()
-                                .zip(bytes.iter_mut())
-                            {
-                                *dst = *src;
-                            }
+                let bootstrap_complete = {
+                    let opt_bootstrap = match table_actions.get_mut(&trans_id.action_id()) {
+                        Some(&mut TableAction::Refresh(_)) => {
+                            work_storage.routing_table.add_node(node);
+                            None
                         }
-                        SocketAddr::V6(_) => {
-                            error!("AnnounceStorage contained an IPv6 Address...");
-                            return;
+                        Some(&mut TableAction::Bootstrap(ref mut bootstrap, _attempts)) => {
+                            if !bootstrap.is_router(&node.addr()) {
+                                work_storage.routing_table.add_node(node);
+                            }
+                            Some(bootstrap)
+                        }
+
+                        _ => {
+                            error!(
+                            "bittorrent-protocol_dht: Resolved a TransactionID to a FindNodeResponse no action..."
+                        );
+                            None
                         }
                     };
 
-                    bytes[4] = (port >> 8) as u8;
-                    bytes[5] = (port & 0x00FF) as u8;
+                    if let Some(bootstrap) = opt_bootstrap {
+                        match bootstrap.recv_response(
+                            &trans_id,
+                            &mut work_storage.routing_table,
+                            &work_storage.message_out,
+                            timer,
+                        ).await {
+                            BootstrapStatus::Bootstrapping => false,
+                            BootstrapStatus::Failed => {
+                                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
+                                false
+                            }
+                            BootstrapStatus::Completed => {
 
-                    contact_info_bytes.extend_from_slice(&bytes);
-                });
-            // Grab the bencoded list (ugh, we really have to do this, better apis I say!!!)
-            let mut contact_info_bencode = Vec::with_capacity(contact_info_bytes.len() / 6);
-            for chunk_index in 0..(contact_info_bytes.len() / 6) {
-                let (start, end) = (chunk_index * 6, chunk_index * 6 + 6);
+                                //直接使用 bootstrap引用 会违反可变引用唯一原则
+                                // self.attempt_rebootstrap(bootstrap, attempts).await
+                                //     == Some(true)
 
-                contact_info_bencode.push(dht_ben_bytes!(&contact_info_bytes[start..end]));
-            }
+                                if self.nood_to_less() {
+                                    if let Some(TableAction::Bootstrap(bootstrap,attempts)) = self.table_actions.remove(&trans_id.action_id()){
+                                        self.attempt_rebootstrap(bootstrap, attempts,&trans_id).await == Some(true)
+                                    }else {
+                                        false
+                                    }
 
-            // Grab the closest nodes
-            let mut closest_nodes_bytes = Vec::with_capacity(26 * 8);
-            for node in work_storage
-                .routing_table
-                .closest_nodes(g.info_hash())
-                .take(8)
-            {
-                closest_nodes_bytes.extend_from_slice(&node.encode());
-            }
-
-            // Wrap up the nodes/values we are going to be giving them
-            let token = work_storage
-                .token_store
-                .checkout(IpAddr::from_socket_addr(addr));
-            let comapct_info_type = if !contact_info_bencode.is_empty() {
-                CompactInfoType::Both(
-                    CompactNodeInfo::new(&closest_nodes_bytes).unwrap(),
-                    CompactValueInfo::new(&contact_info_bencode).unwrap(),
-                )
-            } else {
-                CompactInfoType::Nodes(CompactNodeInfo::new(&closest_nodes_bytes).unwrap())
-            };
-
-            let get_peers_rsp = GetPeersResponse::new(
-                g.transaction_id(),
-                work_storage.routing_table.node_id(),
-                Some(token.as_ref()),
-                comapct_info_type,
-            );
-            let get_peers_msg = get_peers_rsp.encode();
-
-            if work_storage
-                // .out_channel
-                // .send((get_peers_msg, addr))
-                .message_out.send((get_peers_msg, addr))
-                .await
-                .is_err()
-            {
-                error!("bittorrent-protocol_dht: Failed to send a get peers response on the out channel...");
-                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
-            }
-        }
-        Ok(MessageType::Request(RequestType::AnnouncePeer(a))) => {
-            info!("bittorrent-protocol_dht: Received an AnnouncePeerRequest...");
-            let node = Node::as_good(a.node_id(), addr);
-
-            // Node requested from us, mark it in the Routingtable
-            work_storage
-                .routing_table
-                .find_node_mut(&node.handle())
-                .map(|n| n.remote_request());
-
-            // Validate the token
-            let is_valid = match Token::new(a.token()) {
-                Ok(t) => work_storage
-                    .token_store
-                    .checkin(IpAddr::from_socket_addr(addr), t),
-                Err(_) => false,
-            };
-
-            // Create a socket address based on the implied/explicit port number
-            let connect_addr = match a.connect_port() {
-                ConnectPort::Implied => addr,
-                ConnectPort::Explicit(port) => match addr {
-                    SocketAddr::V4(v4_addr) => {
-                        SocketAddr::V4(SocketAddrV4::new(*v4_addr.ip(), port))
-                    }
-                    SocketAddr::V6(v6_addr) => SocketAddr::V6(SocketAddrV6::new(
-                        *v6_addr.ip(),
-                        port,
-                        v6_addr.flowinfo(),
-                        v6_addr.scope_id(),
-                    )),
-                },
-            };
-
-            // Resolve type of response we are going to send
-            let response_msg = if !is_valid {
-                // Node gave us an invalid token
-                warn!("bittorrent-protocol_dht: Remote node sent us an invalid token for an AnnounceRequest...");
-                ErrorMessage::new(
-                    a.transaction_id().to_vec(),
-                    ErrorCode::ProtocolError,
-                    "Received An Invalid Token".to_owned(),
-                )
-                .encode()
-            } else if work_storage
-                .active_stores
-                .add_item(a.info_hash(), connect_addr)
-            {
-                // Node successfully stored the value with us, send an announce response
-                AnnouncePeerResponse::new(a.transaction_id(), work_storage.routing_table.node_id())
-                    .encode()
-            } else {
-                // Node unsuccessfully stored the value with us, send them an error message
-                // TODO: Spec doesnt actually say what error message to send, or even if we should send one...
-                warn!(
-                    "bittorrent-protocol_dht: AnnounceStorage failed to store contact information because it \
-                       is full..."
-                );
-                ErrorMessage::new(
-                    a.transaction_id().to_vec(),
-                    ErrorCode::ServerError,
-                    "Announce Storage Is Full".to_owned(),
-                )
-                .encode()
-            };
-
-            if work_storage.message_out.send((response_msg, addr)).await.is_err() {
-                error!("bittorrent-protocol_dht: Failed to send an announce peer response on the out channel...");
-                self.handle_command_shutdown(ShutdownCause::Unspecified).await;
-            }
-        }
-        Ok(MessageType::Response(ResponseType::FindNode(f))) => {
-            info!("bittorrent-protocol_dht: Received a FindNodeResponse...");
-            let trans_id = TransactionID::from_bytes(f.transaction_id()).unwrap();
-            let node = Node::as_good(f.node_id(), addr);
-
-            // Add the payload nodes as questionable
-            for (id, v4_addr) in f.nodes() {
-                let sock_addr = SocketAddr::V4(v4_addr);
-
-                work_storage
-                    .routing_table
-                    .add_node(Node::as_questionable(id, sock_addr));
-            }
-
-            let bootstrap_complete = {
-                let opt_bootstrap = match table_actions.get_mut(&trans_id.action_id()) {
-                    Some(&mut TableAction::Refresh(_)) => {
-                        work_storage.routing_table.add_node(node);
-                        None
-                    }
-                    Some(&mut TableAction::Bootstrap(ref mut bootstrap, _attempts)) => {
-                        if !bootstrap.is_router(&node.addr()) {
-                            work_storage.routing_table.add_node(node);
+                                } else {
+                                    true
+                                }
+                            }
                         }
-                       Some(bootstrap)
-                    }
-
-                    _ => {
-                        error!(
-                            "bittorrent-protocol_dht: Resolved a TransactionID to a FindNodeResponse no action..."
-                        );
-                        None
+                    } else {
+                        false
                     }
                 };
 
-                if let Some(bootstrap) = opt_bootstrap {
-                    match bootstrap.recv_response(
-                        &trans_id,
-                        &mut work_storage.routing_table,
-                        &work_storage.message_out,
-                        timer,
-                    ).await {
-                        BootstrapStatus::Bootstrapping => false,
-                        BootstrapStatus::Failed => {
-                            self.handle_command_shutdown(ShutdownCause::Unspecified).await;
-                            false
-                        }
-                        BootstrapStatus::Completed => {
+                if bootstrap_complete {
+                    self.broadcast_bootstrap_completed(
+                        trans_id.action_id()
+                    ).await;
+                }
 
-                            //直接使用 bootstrap引用 会违反可变引用唯一原则
-                            // self.attempt_rebootstrap(bootstrap, attempts).await
-                            //     == Some(true)
+                if log_enabled!(Level::Info) {
+                    let mut total = 0;
 
-                            if self.nood_to_less() {
-                                if let Some(TableAction::Bootstrap(bootstrap,attempts)) = self.table_actions.remove(&trans_id.action_id()){
-                                    self.attempt_rebootstrap(bootstrap, attempts,&trans_id).await == Some(true)
-                                }else {
-                                    false
-                                }
-
-                            } else {
-                                true
+                    for (index, bucket) in self.detached.routing_table.buckets().enumerate() {
+                        let num_nodes = match bucket {
+                            BucketContents::Empty => 0,
+                            BucketContents::Sorted(b) => {
+                                b.iter().filter(|n| n.status() == NodeStatus::Good).count()
                             }
+                            BucketContents::Assorted(b) => {
+                                b.iter().filter(|n| n.status() == NodeStatus::Good).count()
+                            }
+                        };
+                        total += num_nodes;
+
+                        if num_nodes != 0 {
+                            print!("Bucket {}: {} | ", index, num_nodes);
                         }
                     }
-                } else {
-                    false
+
+                    print!("\nTotal: {}\n\n\n", total);
                 }
-            };
-
-            if bootstrap_complete {
-                self.broadcast_bootstrap_completed(
-                    trans_id.action_id()
-                ).await;
             }
+            ResponseType::GetPeers(g) => {
+                info!("bittorrent-protocol_dht: Received a GetPeersResponse...");
+                let trans_id = TransactionID::from_bytes(g.transaction_id()).unwrap();
+                let node = Node::as_good(g.node_id(), addr);
 
-            if log_enabled!(Level::Info) {
-                let mut total = 0;
+                work_storage.routing_table.add_node(node.clone());
 
-                for (index, bucket) in self.detached.routing_table.buckets().enumerate() {
-                    let num_nodes = match bucket {
-                        BucketContents::Empty => 0,
-                        BucketContents::Sorted(b) => {
-                            b.iter().filter(|n| n.status() == NodeStatus::Good).count()
-                        }
-                        BucketContents::Assorted(b) => {
-                            b.iter().filter(|n| n.status() == NodeStatus::Good).count()
-                        }
-                    };
-                    total += num_nodes;
-
-                    if num_nodes != 0 {
-                        print!("Bucket {}: {} | ", index, num_nodes);
-                    }
-                }
-
-                print!("\nTotal: {}\n\n\n", total);
-            }
-        }
-        Ok(MessageType::Response(ResponseType::GetPeers(g))) => {
-            info!("bittorrent-protocol_dht: Received a GetPeersResponse...");
-            let trans_id = TransactionID::from_bytes(g.transaction_id()).unwrap();
-            let node = Node::as_good(g.node_id(), addr);
-
-            work_storage.routing_table.add_node(node.clone());
-
-            let opt_lookup = {
-                match table_actions.get_mut(&trans_id.action_id()) {
-                    Some(&mut TableAction::Lookup(ref mut lookup)) => Some(lookup),
-                    _ => {
-                        error!(
+                let opt_lookup = {
+                    match table_actions.get_mut(&trans_id.action_id()) {
+                        Some(&mut TableAction::Lookup(ref mut lookup)) => Some(lookup),
+                        _ => {
+                            error!(
                             "bittorrent-protocol_dht: Resolved a TransactionID to a GetPeersResponse but no \
                                 action found..."
                         );
-                        None
+                            None
+                        }
                     }
-                }
-            };
+                };
 
-            if let Some(lookup) = opt_lookup {
-                match (lookup.recv_response(
-                    node,
-                    &trans_id,
-                    g,
-                    &mut work_storage.routing_table,
-                    &work_storage.message_out,
-                    timer,
-                ).await, lookup.info_hash()) {
-                    // 为什么必须要在元组里求hash,而不是到事件发布的时候求呢？
-                    // 因为 lookup所在引用 与 broadcast_dht_event方法的引用冲突，违反单一可变。
-                    (LookupStatus::Searching,_) => (),
-                    (LookupStatus::Completed,infohash) => self.broadcast_dht_event(
-                        DhtEvent::LookupCompleted(infohash)
-                    ).await,
-                    (LookupStatus::Failed,_) => {
-                        self.handle_command_shutdown(ShutdownCause::Unspecified).await
+                if let Some(lookup) = opt_lookup {
+                    match (lookup.recv_response(
+                        node,
+                        &trans_id,
+                        g,
+                        &mut work_storage.routing_table,
+                        &work_storage.message_out,
+                        timer,
+                    ).await, lookup.info_hash()) {
+                        // 为什么必须要在元组里求hash,而不是到事件发布的时候求呢？
+                        // 因为 lookup所在引用 与 broadcast_dht_event方法的引用冲突，违反单一可变。
+                        (LookupStatus::Searching,_) => (),
+                        (LookupStatus::Completed,infohash) => self.broadcast_dht_event(
+                            DhtEvent::LookupCompleted(infohash)
+                        ).await,
+                        (LookupStatus::Failed,_) => {
+                            self.handle_command_shutdown(ShutdownCause::Unspecified).await
+                        }
                     }
                 }
             }
-        }
-        //todo
-        Ok(MessageType::Response(ResponseType::Ping(_))) => {
-            info!("bittorrent-protocol_dht: Received a PingResponse...");
+            ResponseType::Ping(_) => {
+                info!("bittorrent-protocol_dht: Received a PingResponse...");
 
-            // Yeah...we should never be getting this type of response (we never use this message)
-        }
-        //todo
-        Ok(MessageType::Response(ResponseType::AnnouncePeer(_))) => {
-            info!("bittorrent-protocol_dht: Received an AnnouncePeerResponse...");
-        }
-        Ok(MessageType::Response(ResponseType::Acting(a))) => {
-            info!("bittorrent-protocol_dht: Received a ActingResponse...");
-            let node = Node::as_good(a.node_id(), addr);
+                // Yeah...we should never be getting this type of response (we never use this message)
+            }
+            ResponseType::AnnouncePeer(_) => {
+                info!("bittorrent-protocol_dht: Received an AnnouncePeerResponse...");
+            }
+            ResponseType::Acting(a) => {
+                info!("bittorrent-protocol_dht: Received a ActingResponse...");
+                let node = Node::as_good(a.node_id(), addr);
 
-            work_storage.routing_table.add_node(node);
-        }
-        //todo
-        Ok(MessageType::Error(e)) => {
-            info!("bittorrent-protocol_dht: Received an ErrorMessage...");
-
-            warn!(
-                "bittorrent-protocol_dht: KRPC error message from {:?}: {:?}",
-                addr, e
-            );
-        }
-        Err(e) => {
-            warn!(
-                "bittorrent-protocol_dht: Error parsing KRPC message: {:?}",
-                e
-            );
+                work_storage.routing_table.add_node(node);
+            }
         }
     }
-}
 
 
 
