@@ -947,17 +947,17 @@ async fn handle_check_bootstrap_timeout(
                 false
             }
             Some(BootstrapStatus::Completed) => {
-                if !self.nood_to_less() {
-                    true
-                }
-
-                //直接使用 上面的bootstrap引用 会违反可变引用唯一原则
-                // self.attempt_rebootstrap(bootstrap, attempts).await
-                //     == Some(true)
-                if let Some(TableAction::Bootstrap(bootstrap,attempts)) = self.table_actions.remove(&trans_id.action_id()){
-                    self.attempt_rebootstrap(bootstrap, attempts,&trans_id).await == Some(true)
+                if self.nood_to_less() {
+                    //直接使用 上面的bootstrap引用 会违反可变引用唯一原则
+                    // self.attempt_rebootstrap(bootstrap, attempts).await
+                    //     == Some(true)
+                    if let Some(TableAction::Bootstrap(bootstrap,attempts)) = self.table_actions.remove(&trans_id.action_id()){
+                        self.attempt_rebootstrap(bootstrap, attempts,&trans_id).await == Some(true)
+                    }else {
+                        false
+                    }
                 }else {
-                    false
+                    true
                 }
             }
             _=> false,
