@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::mpsc::Sender;
@@ -12,7 +12,7 @@ use btp_util::sha::ShaHash;
 use crate::message::announce_peer::{AnnouncePeerRequest, ConnectPort};
 use crate::message::get_peers::{CompactInfoType, GetPeersRequest, GetPeersResponse};
 use crate::routing::bucket;
-use crate::routing::node::{Node, NodeStatus};
+use crate::routing::node::{Node, NodeHandle, NodeStatus};
 use crate::routing::table::RoutingTable;
 use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::ScheduledTask;
@@ -53,11 +53,11 @@ pub struct TableLookup {
     // interestingly enough (and super important), this distance may not be eqaul to the
     // requested node's distance
     active_lookups: HashMap<TransactionID, (DistanceToBeat, Timeout)>,
-    announce_tokens: HashMap<Node, Vec<u8>>,
-    requested_nodes: HashSet<Node>,
+    announce_tokens: HashMap<NodeHandle, Vec<u8>>,
+    requested_nodes: HashSet<NodeHandle>,
     // Storing whether or not it has ever been pinged so that we
     // can perform the brute force lookup if the lookup failed
-    all_sorted_nodes: Vec<(Distance, Node, bool)>,
+    all_sorted_nodes: Vec<(Distance, NodeHandle, bool)>,
     tx: mpsc::UnboundedSender<SocketAddr>,
 }
 
@@ -83,7 +83,7 @@ impl TableLookup {
             .filter(|n| n.status() == NodeStatus::Good)
             .take(bucket::MAX_BUCKET_SIZE)
         {
-            insert_sorted_node(&mut all_sorted_nodes, target_id, node.clone(), false);
+            insert_sorted_node(&mut all_sorted_nodes, target_id, *node.handle(), false);
         }
 
         // Call pick_initial_nodes with the all_sorted_nodes list as an iterator
@@ -91,9 +91,9 @@ impl TableLookup {
         let initial_pick_nodes_filtered =
             initial_pick_nodes
                 .iter()
-                .filter(|&&(_, good)| good)
-                .map(|&(ref node, _)| {
-                    let distance_to_beat = node.id() ^ target_id;
+                .filter(|(_, good)| *good)
+                .map(|(node, _)| {
+                    let distance_to_beat = node.id ^ target_id;
 
                     (node, distance_to_beat)
                 });
@@ -156,7 +156,7 @@ impl TableLookup {
 
         // Add the announce token to our list of tokens
         if let Some(token) = msg.token() {
-            self.announce_tokens.insert(node, token.to_vec());
+            self.announce_tokens.insert(*node.handle(), token.to_vec());
         }
 
         // Pull out the contact information from the message
@@ -173,18 +173,28 @@ impl TableLookup {
         let (iterate_nodes, next_dist_to_beat) = if let Some(nodes) = opt_nodes {
             let requested_nodes = &self.requested_nodes;
 
-            // Filter for nodes that we have already requested from
-            let already_requested = |node_info: &(NodeId, SocketAddrV4)| {
-                let node = Node::as_questionable(node_info.0, SocketAddr::V4(node_info.1));
+            let nodehandles=nodes
+                .into_iter()
+                .map(|(id,addr)|{
+                    NodeHandle::new(id, SocketAddr::V4(addr))
+                }).collect::<Vec<NodeHandle>>();
 
-                !requested_nodes.contains(&node)
-            };
+            // Filter for nodes that we have already requested from
+            // let already_requested = |node_info: &(NodeId, SocketAddrV4)| {
+            //     let nodehandle = NodeHandle::new(node_info.0, SocketAddr::V4(node_info.1));
+            //     !requested_nodes.contains(&nodehandle)
+            // };
 
             // Get the closest distance (or the current distance)
-            let next_dist_to_beat = nodes.into_iter().filter(&already_requested).fold(
+            let next_dist_to_beat = nodehandles
+                .iter()
+                .filter(|nodehandle|{
+                    !requested_nodes.contains(nodehandle)
+                })
+                .fold(
                 dist_to_beat,
-                |closest, (id, _)| {
-                    let distance = self.target_id ^ id;
+                |closest, nodehandle| {
+                    let distance = self.target_id ^ nodehandle.id;
 
                     if distance < closest {
                         distance
@@ -197,30 +207,30 @@ impl TableLookup {
             // Check if we got closer (equal to is not enough)
             let iterate_nodes = if next_dist_to_beat < dist_to_beat {
                 let iterate_nodes = pick_iterate_nodes(
-                    nodes.into_iter().filter(&already_requested),
+                    nodehandles
+                         .iter()
+                         .filter(|nodehandle|{
+                             !requested_nodes.contains(nodehandle)
+                         })
+                        .copied(),
                     self.target_id,
                 );
 
                 // Push nodes into the all nodes list
-                for (id, v4_addr) in nodes {
-                    let addr = SocketAddr::V4(v4_addr);
-                    let node = Node::as_questionable(id, addr);
+                for nodehandle in nodehandles {
                     let will_ping = iterate_nodes
                         .iter()
-                        .find(|&&(ref n, _)| n == &node)
-                        .is_some();
+                        //todo 他们是同一个吗？用指针判断？还是实现了相等判断接口？
+                        .any(|(n, _)| n == &nodehandle);
 
-                    insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, node, will_ping);
+                    insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, will_ping);
                 }
 
                 Some(iterate_nodes)
             } else {
                 // Push nodes into the all nodes list
-                for (id, v4_addr) in nodes {
-                    let addr = SocketAddr::V4(v4_addr);
-                    let node = Node::as_questionable(id, addr);
-
-                    insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, node, false);
+                for nodehandle in nodehandles {
+                    insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, false);
                 }
 
                 None
@@ -237,8 +247,9 @@ impl TableLookup {
             if let Some(ref nodes) = iterate_nodes {
                 let filtered_nodes = nodes
                     .iter()
-                    .filter(|&&(_, good)| good)
-                    .map(|&(ref n, _)| (n, next_dist_to_beat));
+                    .filter(|(_, good)| *good)
+                    .map(|(n, _)| (n, next_dist_to_beat));
+
                 if self.start_request_round(filtered_nodes, table, out, timer).await
                     == LookupStatus::Failed
                 {
@@ -281,6 +292,8 @@ impl TableLookup {
             return self.current_lookup_status();
         }
         log::trace!( "lookup_recv_timeout: remove trans_id :{:?}",trans_id);
+
+        //未开启最后广播，活跃请求为0的时候，开启广播。
         if !self.in_endgame {
             // If there are not more active lookups, start the endgame
             if self.active_lookups.is_empty() {
@@ -309,7 +322,7 @@ impl TableLookup {
             for &(_, ref node, _) in self
                 .all_sorted_nodes
                 .iter()
-                .filter(|&&(_, ref node, _)| announce_tokens.contains_key(node))
+                .filter(|(_, node, _)| announce_tokens.contains_key(node))
                 .take(ANNOUNCE_PICK_NUM)
             {
                 let trans_id = self.id_generator.generate();
@@ -324,20 +337,25 @@ impl TableLookup {
                 );
                 let announce_peer_msg = announce_peer_req.encode();
 
-                if out.send((announce_peer_msg, node.addr())).await.is_err() {
+                if out.send((announce_peer_msg, node.addr)).await.is_err() {
                     error!(
                         "bittorrent-protocol_dht: TableLookup announce request failed to send through the out \
                             channel..."
                     );
-                    fatal_error = true;
 
+                    fatal_error = true;
+                    // 使用socket是跳到下一个循环，
+                    // 使用通道是跳出循环，因为通道错误就完全不能发送了。
                     break
                 }
 
-                if !fatal_error {
-                    // We requested from the node, marke it down if the node is in our routing table
-                    table.find_node_mut(node.handle()).map(|n| n.local_request());
-                }
+                //有错误的时候都不走这里了，所以不用判断了。
+                // if !fatal_error {
+                //     // We requested from the node, marke it down if the node is in our routing table
+                //     table.find_node_mut(node).map(|n| n.local_request());
+                // }
+
+                table.find_node_mut(node).map(|n| n.local_request());
             }
         }
 
@@ -368,7 +386,7 @@ impl TableLookup {
         timer: &mut Timer<ScheduledTask>,
     ) -> LookupStatus
     where
-        I: Iterator<Item = (&'a Node, DistanceToBeat)>,
+        I: Iterator<Item = (&'a NodeHandle, DistanceToBeat)>,
 
     {
         // Loop through the given nodes
@@ -386,20 +404,23 @@ impl TableLookup {
             // Send the message to the node
             let get_peers_msg =
                 GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-            if out.send((get_peers_msg, node.addr())).await.is_err() {
+            if out.send((get_peers_msg, node.addr)).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a lookup message through the channel...");
+                // 通道发送失败，直接终止，
+                // 如果是socket,可以开启下一次循环，因为不一定是传输的原因，可能是数据包过大。
                 return LookupStatus::Failed;
             }
 
             // We requested from the node, mark it down
-            self.requested_nodes.insert(node.clone());
+            self.requested_nodes.insert(*node);
 
             // Update the node in the routing table
-            table.find_node_mut(node.handle()).map(|n| n.local_request());
+            table.find_node_mut(node).map(|n| n.local_request());
 
             messages_sent += 1;
         }
 
+        // 可以判断noods为0与socket发送失败两种情况。保留。
         if messages_sent == 0 {
             self.active_lookups.clear();
             LookupStatus::Completed
@@ -443,13 +464,13 @@ impl TableLookup {
                 // Send the message to the node
                 let get_peers_msg =
                     GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
-                if out.send((get_peers_msg, node.addr())).await.is_err() {
+                if out.send((get_peers_msg, node.addr)).await.is_err() {
                     error!("bittorrent-protocol_dht: Could not send an endgame message through the channel...");
                     return LookupStatus::Failed;
                 }
 
                 // Mark that we requested from the node in the RoutingTable
-                table.find_node_mut(node.handle()).map(|n| n.local_request());
+                table.find_node_mut(node).map(|n| n.local_request());
 
                 // Mark that we requested from the node
                 *req = true;
@@ -461,19 +482,26 @@ impl TableLookup {
 }
 
 /// Picks a number of nodes from the sorted distance iterator to ping on the first round.
-fn pick_initial_nodes<'a, I>(sorted_nodes: I) -> [(Node, bool); INITIAL_PICK_NUM]
+fn pick_initial_nodes<'a, I>(sorted_nodes: I) -> [(NodeHandle, bool); INITIAL_PICK_NUM]
 where
-    I: Iterator<Item = &'a mut (Distance, Node, bool)>,
+    I: Iterator<Item = &'a mut (Distance, NodeHandle, bool)>,
 {
     let dummy_id = [0u8; bt::NODE_ID_LEN].into();
-    let default = (Node::as_bad(dummy_id, net::default_route_v4()), false);
+    // let default = (Node::as_bad(dummy_id, net::default_route_v4()), false);
+    // let mut pick_nodes = [
+    //     default.clone(),
+    //     default.clone(),
+    //     default.clone(),
+    //     default.clone(),
+    // ];
 
-    let mut pick_nodes = [
-        default.clone(),
-        default.clone(),
-        default.clone(),
-        default.clone(),
-    ];
+    let default = (
+        NodeHandle::new(dummy_id, SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
+        false,
+    );
+    let mut pick_nodes = [default; INITIAL_PICK_NUM];
+
+
     for (src, dst) in sorted_nodes.zip(pick_nodes.iter_mut()) {
         dst.0 = src.1.clone();
         dst.1 = true;
@@ -489,19 +517,22 @@ where
 fn pick_iterate_nodes<I>(
     unsorted_nodes: I,
     target_id: InfoHash,
-) -> [(Node, bool); ITERATIVE_PICK_NUM]
+) -> [(NodeHandle, bool); ITERATIVE_PICK_NUM]
 where
-    I: Iterator<Item = (NodeId, SocketAddrV4)>,
+    I: Iterator<Item = NodeHandle>,
 {
     let dummy_id = [0u8; bt::NODE_ID_LEN].into();
-    let default = (Node::as_bad(dummy_id, net::default_route_v4()), false);
 
-    let mut pick_nodes = [default.clone(), default.clone(), default.clone()];
-    for (id, v4_addr) in unsorted_nodes {
-        let addr = SocketAddr::V4(v4_addr);
-        let node = Node::as_questionable(id, addr);
+    // let default = (Node::as_bad(dummy_id, net::default_route_v4()), false);
+    // let mut pick_nodes = [default.clone(), default.clone(), default.clone()];
+    let default = (
+        NodeHandle::new(dummy_id, SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
+        false,
+    );
+    let mut pick_nodes = [default; ITERATIVE_PICK_NUM];
 
-        insert_closest_nodes(&mut pick_nodes, target_id, node);
+    for nodehandle in unsorted_nodes {
+        insert_closest_nodes(&mut pick_nodes, target_id, nodehandle);
     }
 
     pick_nodes
@@ -509,8 +540,8 @@ where
 
 /// Inserts the node into the slice if a slot in the slice is unused or a node
 /// in the slice is further from the target id than the node being inserted.
-fn insert_closest_nodes(nodes: &mut [(Node, bool)], target_id: InfoHash, new_node: Node) {
-    let new_distance = target_id ^ new_node.id();
+fn insert_closest_nodes(nodes: &mut [(NodeHandle, bool)], target_id: InfoHash, new_node: NodeHandle) {
+    let new_distance = target_id ^ new_node.id;
 
     for &mut (ref mut old_node, ref mut used) in nodes.iter_mut() {
         if !*used {
@@ -520,7 +551,7 @@ fn insert_closest_nodes(nodes: &mut [(Node, bool)], target_id: InfoHash, new_nod
             return;
         } else {
             // Slot is in use, see if our node is closer to the target
-            let old_distance = target_id ^ old_node.id();
+            let old_distance = target_id ^ old_node.id;
 
             if new_distance < old_distance {
                 *old_node = new_node;
@@ -534,12 +565,12 @@ fn insert_closest_nodes(nodes: &mut [(Node, bool)], target_id: InfoHash, new_nod
 ///
 /// Nodes at the start of the list are closer to the target node than nodes at the end.
 fn insert_sorted_node(
-    nodes: &mut Vec<(Distance, Node, bool)>,
+    nodes: &mut Vec<(Distance, NodeHandle, bool)>,
     target: InfoHash,
-    node: Node,
+    node: NodeHandle,
     pinged: bool,
 ) {
-    let node_id = node.id();
+    let node_id = node.id;
     let node_dist = target ^ node_id;
 
     // Perform a search by distance from the target id
