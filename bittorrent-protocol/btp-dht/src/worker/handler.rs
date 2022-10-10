@@ -411,9 +411,9 @@ impl DhtHandler
         self.detached.bootstrapping = false;
 
         // Remove the bootstrap action from our table actions
+        warn!("bootstrap_completed remove bootstrap action_id:{:?}",&action_id);
         self.table_actions.remove(&action_id);
 
-        warn!("bootstrap_completed remove bootstrap action_id:{:?}",&action_id);
 
         // Start the post bootstrap actions.
         let mut future_actions = self.detached.future_actions.split_off(0);
@@ -463,6 +463,8 @@ impl DhtHandler
                 tx,
                 &mut self.timer,
             ).await {
+
+                // 这里有2种状态：启动失败与第一次节点为0都算失败，只有搜索中才算成功
                 Some(lookup) => {
                     self.table_actions.insert(action_id, TableAction::Lookup(lookup));
                 }
@@ -730,6 +732,7 @@ impl DhtHandler
         match response {
             ResponseType::FindNode(f) => {
                 info!("bittorrent-protocol_dht: Received a FindNodeResponse...");
+                //todo 直接unwrap是不好的行为，此处因为要检查消息序列化正确情况，所以暂时保留。
                 let trans_id = TransactionID::from_bytes(f.transaction_id()).unwrap();
                 let node = Node::as_good(f.node_id(), addr);
 
@@ -829,44 +832,48 @@ impl DhtHandler
             }
             ResponseType::GetPeers(g) => {
                 info!("bittorrent-protocol_dht: Received a GetPeersResponse...");
+                //todo 直接unwrap是不好的行为，此处因为要检查消息序列化正确情况，所以暂时保留。
                 let trans_id = TransactionID::from_bytes(g.transaction_id()).unwrap();
+                //此处获取响应节点，但某些情况消息体内也包含了ip与端口，暂时以udp socket解析为主
                 let node = Node::as_good(g.node_id(), addr);
 
                 work_storage.routing_table.add_node(node.clone());
 
-                let opt_lookup = {
+                let lookup = {
                     match table_actions.get_mut(&trans_id.action_id()) {
-                        Some(&mut TableAction::Lookup(ref mut lookup)) => Some(lookup),
+                        Some(&mut TableAction::Lookup(ref mut lookup)) => lookup,
                         _ => {
                             error!(
                             "bittorrent-protocol_dht: Resolved a TransactionID to a GetPeersResponse but no \
                                 action found..."
                         );
-                            None
+                            //其实此处可以直接返回了；
+                            return;
                         }
                     }
                 };
 
-                if let Some(lookup) = opt_lookup {
                     match (lookup.recv_response(
-                        node,
-                        &trans_id,
-                        g,
-                        &mut work_storage.routing_table,
-                        &work_storage.message_out,
-                        timer,
-                    ).await, lookup.info_hash()) {
-                        // 为什么必须要在元组里求hash,而不是到事件发布的时候求呢？
-                        // 因为 lookup所在引用 与 broadcast_dht_event方法的引用冲突，违反单一可变。
-                        (LookupStatus::Searching,_) => (),
+                                node,
+                                &trans_id,
+                                g,
+                                &mut work_storage.routing_table,
+                                &work_storage.message_out,
+                                timer,).await,
+                           lookup.info_hash()  // 为什么必须要在元组里求hash,而不是到事件发布的时候求呢？
+                    )                          // 因为 lookup所在引用 与 broadcast_dht_event方法的引用冲突，违反单一可变。
+                    {
+
+                        // 此处只会有3种状态，消息发送失败、不需要最后循环的成功、以及正常继续搜索
                         (LookupStatus::Completed,infohash) => self.broadcast_dht_event(
                             DhtEvent::LookupCompleted(infohash)
                         ).await,
                         (LookupStatus::Failed,_) => {
                             self.handle_command_shutdown(ShutdownCause::Unspecified).await
                         }
+                        _ => (),
                     }
-                }
+
             }
             ResponseType::Ping(_) => {
                 info!("bittorrent-protocol_dht: Received a PingResponse...");
@@ -881,6 +888,8 @@ impl DhtHandler
                 let node = Node::as_good(a.node_id(), addr);
 
                 work_storage.routing_table.add_node(node);
+
+                //todo,可能需要根据事物id进一步判断具体类型，做一些可能的事后处理，不是很重要，暂不处理。
             }
         }
     }
@@ -979,7 +988,7 @@ async fn handle_check_lookup_timeout(
     let (work_storage, table_actions) = (&mut self.detached, &mut self.table_actions);
 
     let opt_lookup_info = match table_actions.get_mut(&trans_id.action_id()) {
-        Some(&mut TableAction::Lookup(ref mut lookup)) => Some((
+        Some(&mut TableAction::Lookup(ref mut lookup)) => (
             lookup.recv_timeout(
                 &trans_id,
                 &mut work_storage.routing_table,
@@ -987,20 +996,23 @@ async fn handle_check_lookup_timeout(
                 &mut self.timer,
             ).await,
             lookup.info_hash(),
-        )),
+        ),
         _ => {
             error!(
                 "bittorrent-protocol_dht: Resolved a TransactionID to a check table lookup..."
             );
-            None
+            //其他情况直接返回，没必要给None,后面在一起判断。
+            return;
         }
     };
 
+    // 这里有3种状态：搜索中、不需要启动最后循环时的成功、启动最后循环失败
+    // 后面两种状态需要处理
     match opt_lookup_info {
-        Some((LookupStatus::Completed, info_hash)) => self.broadcast_dht_event(
+        (LookupStatus::Completed, info_hash) => self.broadcast_dht_event(
             DhtEvent::LookupCompleted(info_hash),
         ).await,
-        Some((LookupStatus::Failed, _)) => {
+        (LookupStatus::Failed, _) => {
             self.handle_command_shutdown(ShutdownCause::Unspecified).await
         }
         _ => (),
@@ -1016,32 +1028,33 @@ async fn handle_check_lookup_endgame(
 
     warn!("remove lookup action_id:{:?}",&trans_id.action_id());
 
-    let opt_lookup_info = match table_actions.remove(&trans_id.action_id()) {
-        Some(TableAction::Lookup(mut lookup)) => Some((
+    let lookup_info = match table_actions.remove(&trans_id.action_id()) {
+        Some(TableAction::Lookup(mut lookup)) => (
             lookup.recv_finished(
                 work_storage.announce_port,
                 &mut work_storage.routing_table,
                 &work_storage.message_out,
             ).await,
             lookup.info_hash(),
-        )),
+        ),
         _ => {
             error!(
                 "bittorrent-protocol_dht: Resolved a TransactionID to a check table lookup..."
             );
-            None
+            return;
         }
     };
 
-    match opt_lookup_info {
-        None => (),
-        Some((LookupStatus::Searching, _)) => (),
-        Some((LookupStatus::Completed, info_hash)) => self.broadcast_dht_event(
+    //这里其实只有两种状态：完成或者注册失败
+    match lookup_info {
+        (LookupStatus::Completed, info_hash) => self.broadcast_dht_event(
             DhtEvent::LookupCompleted(info_hash)
         ).await,
-        Some((LookupStatus::Failed, _)) => {
+        (LookupStatus::announceFailed, info_hash) => {
+            self.broadcast_dht_event(DhtEvent::LookupAnFail(info_hash)).await;
             self.handle_command_shutdown(ShutdownCause::Unspecified).await
         }
+        _ => (),
     }
 }
 
