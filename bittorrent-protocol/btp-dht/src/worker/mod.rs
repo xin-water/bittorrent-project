@@ -54,6 +54,8 @@ pub enum DhtEvent {
     BootstrapCompleted,
     /// Lookup operation for the given InfoHash completed.
     LookupCompleted(InfoHash),
+    /// Lookup operation for the given InfoHash announceFailed.
+    LookupAnFail(InfoHash),
     /// DHT is shutting down for some reason.
     ShuttingDown(ShutdownCause),
 }
