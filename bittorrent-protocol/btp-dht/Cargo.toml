@@ -21,4 +21,5 @@ async-recursion = "1.0.0"
 
 [dev-dependencies]
 log4rs          = "1.0.0"
+hex             = "0.3"
 
