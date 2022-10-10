@@ -19,6 +19,22 @@ impl ShaHash {
     pub fn from_bytes(bytes: &[u8]) -> ShaHash {
         ShaHashBuilder::new().add_bytes(bytes).build()
     }
+    /// Create a ShaHash by hashing the given hex.
+    pub fn from_hex(hex: &str) -> ShaHash {
+        let mut exact_bytes = [0u8; 20];
+
+        for byte_index in 0..20 {
+            let high_index = byte_index * 2;
+            let low_index = (byte_index * 2) + 1;
+
+            let hex_chunk = &hex[high_index..low_index + 1];
+            let byte_value = u8::from_str_radix(hex_chunk, 16).unwrap();
+
+            exact_bytes[byte_index] = byte_value;
+        }
+
+        exact_bytes.into()
+    }
 
     /// Create a ShaHash directly from the given hash.
     pub fn from_hash(hash: &[u8]) -> LengthResult<ShaHash> {
