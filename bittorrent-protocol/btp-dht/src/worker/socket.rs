@@ -122,7 +122,7 @@ impl DhtSocket{
             } else {
                 // TODO: Maybe shut down in this case, will fail on every write...
                 warn!(
-                "bittorrent-protocol_dht: Socket Outgoing messenger failed to write {} bytes to {}; {} bytes written \
+                "bittorrent-protocol_dht: DhtSocket Outgoing messenger failed to write {} bytes to {}; {} bytes written \
                    before error...",
                 bytes.len(),
                 addr,
