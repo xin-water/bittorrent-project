@@ -39,6 +39,7 @@ pub enum LookupStatus {
     Searching,
     Completed,
     Failed,
+    announceFailed,
 }
 
 pub struct TableLookup {
@@ -114,8 +115,9 @@ impl TableLookup {
         };
 
         // Call start_request_round with the list of initial_nodes (return even if the search completed...for now :D)
+        // 启动的时候只要不是Searching状态，都算失败。后面定时器触发时直接拿不到lookup对象，跳过就行。
         if table_lookup.start_request_round(initial_pick_nodes_filtered, table, out, timer).await
-            != LookupStatus::Failed
+            == LookupStatus::Searching
         {
             Some(table_lookup)
         } else {
@@ -145,6 +147,7 @@ impl TableLookup {
                 "lookup_recv_response: Received lookup node response trans_id:{:?}, not in active_lookup list ...",
                  trans_id
             );
+            //可以return 搜索状态，同超时处理。
             return self.current_lookup_status();
         };
         log::trace!( "lookup_recv_response: remove trans_id :{:?}",trans_id);
@@ -170,89 +173,107 @@ impl TableLookup {
         };
 
         // Check if we beat the distance, get the next distance to beat
-        let (iterate_nodes, next_dist_to_beat) = if let Some(nodes) = opt_nodes {
-            let requested_nodes = &self.requested_nodes;
 
-            let nodehandles=nodes
-                .into_iter()
-                .map(|(id,addr)|{
-                    NodeHandle::new(id, SocketAddr::V4(addr))
-                }).collect::<Vec<NodeHandle>>();
+        let mut send_iterate_nodes: Option<[(NodeHandle,bool);3]> = None;
+        let mut next_dist_to_beat = dist_to_beat;
 
-            // Filter for nodes that we have already requested from
-            // let already_requested = |node_info: &(NodeId, SocketAddrV4)| {
-            //     let nodehandle = NodeHandle::new(node_info.0, SocketAddr::V4(node_info.1));
-            //     !requested_nodes.contains(&nodehandle)
-            // };
+        if opt_nodes.is_none(){
+                //(None, dist_to_beat)
+                //send_iterate_nodes = None;
+                //next_dist_to_beat = dist_to_beat;
+        }{
+                let requested_nodes = &self.requested_nodes;
 
-            // Get the closest distance (or the current distance)
-            let next_dist_to_beat = nodehandles
-                .iter()
-                .filter(|nodehandle|{
-                    !requested_nodes.contains(nodehandle)
-                })
-                .fold(
-                dist_to_beat,
-                |closest, nodehandle| {
-                    let distance = self.target_id ^ nodehandle.id;
+                //接收到的、未发送过请求的节点
+                let nodehandles=opt_nodes.unwrap()
+                    .into_iter()
+                    .map(|(id,addr)|{
+                        NodeHandle::new(id, SocketAddr::V4(addr))
+                    })
+                    .filter(|nodehandle|{
+                        !requested_nodes.contains(nodehandle)
+                    })
+                    .collect::<Vec<NodeHandle>>();
 
-                    if distance < closest {
-                        distance
-                    } else {
-                        closest
-                    }
-                },
-            );
+                if nodehandles.len() == 0 {
+                    //(None, dist_to_beat)
+                    //send_iterate_nodes = None;
+                    //next_dist_to_beat = dist_to_beat;
+                }else {
 
-            // Check if we got closer (equal to is not enough)
-            let iterate_nodes = if next_dist_to_beat < dist_to_beat {
-                let iterate_nodes = pick_iterate_nodes(
-                    nodehandles
-                         .iter()
-                         .filter(|nodehandle|{
-                             !requested_nodes.contains(nodehandle)
-                         })
-                        .copied(),
-                    self.target_id,
-                );
-
-                // Push nodes into the all nodes list
-                for nodehandle in nodehandles {
-                    let will_ping = iterate_nodes
+                    // Get the closest distance (or the current distance)
+                    let nood_dist_to_beat :DistanceToBeat= nodehandles
                         .iter()
-                        //todo 他们是同一个吗？用指针判断？还是实现了相等判断接口？
-                        .any(|(n, _)| n == &nodehandle);
+                        .fold(
+                            dist_to_beat,
+                            |closest, nodehandle| {
+                                let distance = self.target_id ^ nodehandle.id;
 
-                    insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, will_ping);
+                                if distance < closest {
+                                    distance
+                                } else {
+                                    closest
+                                }
+                            },
+                        );
+
+                    if nood_dist_to_beat >= dist_to_beat {
+
+                        // 如果新节点距离 比 返回响应的节点距离还远，那就直接插入队列，插入的时候是按距离排列的
+                        // Push nodes into the all nodes list
+                        for nodehandle in nodehandles {
+                            insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, false);
+                        }
+                       // (None,dist_to_beat)
+                        //send_iterate_nodes = None;
+                        //next_dist_to_beat = dist_to_beat;
+                    } else {
+
+                        // 距离更近，提取未发送过的、最短3个节点，
+                        // 数组容量是3个，但可能未发送的节点不到3个，多余的位置是默认地址，状态为false.
+                        // 对他们发送查找请求。
+                        let iterate_nodes = pick_iterate_nodes(
+                            nodehandles
+                                .iter()
+                                .copied(),
+                            self.target_id,
+                        );
+
+                        // Push nodes into the all nodes list
+                        for nodehandle in nodehandles {
+                            //判断它是否为发送节点
+                            let will_ping = iterate_nodes
+                                .iter()
+                                //todo 他们是同一个吗？用指针判断？还是实现了相等判断接口？
+                                .any(|(n, _)| {
+                                    *n == nodehandle
+                                });
+
+                            // 按距离插入队列，设置即将发送的节点标志为true
+                            insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, will_ping);
+                        }
+                        send_iterate_nodes = Some(iterate_nodes);
+                        next_dist_to_beat = nood_dist_to_beat;
+                    };
+
                 }
 
-                Some(iterate_nodes)
-            } else {
-                // Push nodes into the all nodes list
-                for nodehandle in nodehandles {
-                    insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, false);
-                }
+            }
 
-                None
-            };
-
-            (iterate_nodes, next_dist_to_beat)
-        } else {
-            (None, dist_to_beat)
-        };
 
         // Check if we need to iterate (not in the endgame already)
         if !self.in_endgame {
             // If the node gave us a closer id than its own to the target id, continue the search
-            if let Some(ref nodes) = iterate_nodes {
+            if let Some(ref nodes) = send_iterate_nodes {
                 let filtered_nodes = nodes
-                    .iter()
-                    .filter(|(_, good)| *good)
+                    .into_iter()
+                    .filter(|(_, good)| *good)  //可能取最优节点的时候不到3个，有空位，排除。
                     .map(|(n, _)| (n, next_dist_to_beat));
 
                 if self.start_request_round(filtered_nodes, table, out, timer).await
                     == LookupStatus::Failed
                 {
+                    //只关注失败情况，其他状态最后一起判断。
                     return LookupStatus::Failed;
                 }
             }
@@ -260,6 +281,7 @@ impl TableLookup {
             // If there are not more active lookups, start the endgame
             if self.active_lookups.is_empty() {
                 if self.start_endgame_round(table, out, timer).await == LookupStatus::Failed {
+                    //只关注失败情况，其他状态最后一起判断。
                     return LookupStatus::Failed;
                 }
             }
@@ -272,9 +294,12 @@ impl TableLookup {
             }
         }
 
+        //同时判断多种情况
         self.current_lookup_status()
     }
 
+    // 此函数只负责移除超时任务和判断开启最后广播，所以状态应该只有失败与继续两种，
+    // 没必要调用current_lookup_status，浪费时间，增加复杂度。
     pub(crate) async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
@@ -289,7 +314,13 @@ impl TableLookup {
                 "lookup_recv_timeout: trans_id:{:?} in active_lookup list not find....",
                  trans_id
             );
+            // 理论上到达此处只有Searching状态，
+            // 启动错误与启动时没节点都直接在new方法处理了
+            // 而搜索完成状态需要start_endgame_round中开启。
+            // 为了稳定还是使用状态判断。
+            //return LookupStatus::Searching;
             return self.current_lookup_status();
+
         }
         log::trace!( "lookup_recv_timeout: remove trans_id :{:?}",trans_id);
 
@@ -303,9 +334,12 @@ impl TableLookup {
             }
         }
 
-        self.current_lookup_status()
+        // 在这里调用状态方法可以直接判断 第一阶段与endgame启动阶段状态
+        // endgame超时不走这里。
+        return self.current_lookup_status();
     }
 
+    //最后自己注册到dht节点阶段。注册完lookup对象将被外部函数移除。
     pub async fn recv_finished(
         &mut self,
         announce_port: Option<u16>,
@@ -319,6 +353,7 @@ impl TableLookup {
             // Partial borrow so the filter function doesnt capture all of self
             let announce_tokens = &self.announce_tokens;
 
+            //弹出8个节点进行注册。
             for &(_, ref node, _) in self
                 .all_sorted_nodes
                 .iter()
@@ -356,17 +391,24 @@ impl TableLookup {
                 // }
 
                 table.find_node_mut(node).map(|n| n.local_request());
+                // 为兼容socket有的发送失败，有的发送成功而做，
+                // 如果不需要更改为socket，应该发送失败时直接返回注册失败状态，而最后时默认完成就好。
+                fatal_error = false;
             }
         }
 
         // This may not be cleared since we didnt set a timeout for each node, any nodes that didnt respond would still be in here.
-        self.active_lookups.clear();
-        self.in_endgame = false;
+
+        // 如果handler中已经移除了lookup对象，此处在修改状态好像是做无用功了，
+        // self.active_lookups.clear();
+        // self.in_endgame = false;
 
         if fatal_error {
-            LookupStatus::Failed
+            LookupStatus::announceFailed
         } else {
-            self.current_lookup_status()
+            //上面修改了状态，此处调用应该是返回complet,但既然都任务都终结了，直接返回完成不是更好？
+            // self.current_lookup_status()
+            LookupStatus::Completed
         }
     }
 
@@ -378,6 +420,7 @@ impl TableLookup {
         }
     }
 
+    // 第一阶段所有节点请求都从这里发起，如果请求数量为0,可以判断没有相关节点，那么任务应该就直接完成了。
     async fn start_request_round<'a, I>(
         &mut self,
         nodes: I,
@@ -406,8 +449,9 @@ impl TableLookup {
                 GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
             if out.send((get_peers_msg, node.addr)).await.is_err() {
                 error!("bittorrent-protocol_dht: Could not send a lookup message through the channel...");
-                // 通道发送失败，直接终止，
+
                 // 如果是socket,可以开启下一次循环，因为不一定是传输的原因，可能是数据包过大。
+                // 通道发送失败，直接终止，
                 return LookupStatus::Failed;
             }
 
@@ -429,6 +473,10 @@ impl TableLookup {
         }
     }
 
+    // 判断无peer向 未发送请求节点 广播请求
+    // 这个函数可以在发送之前判断请求节点数量，如果数量为0,那么可以直接返回完成状态。
+    // 当前算法也是可以的，减少了外层函数状态判断，只是在节点数为0的时候会延长总时间。
+    // 估计大部分情况下节点为0属于不可能事件，而且减少外部状态判断，所以保留当前算法。
     async fn start_endgame_round(
         &mut self,
         table: &mut RoutingTable,
@@ -466,6 +514,9 @@ impl TableLookup {
                     GetPeersRequest::new(trans_id.as_ref(), self.table_id, self.target_id).encode();
                 if out.send((get_peers_msg, node.addr)).await.is_err() {
                     error!("bittorrent-protocol_dht: Could not send an endgame message through the channel...");
+
+                    // 通道发送错误，直接返回失败
+                    // 如果是socket可以跳到下一个循环
                     return LookupStatus::Failed;
                 }
 
@@ -475,12 +526,17 @@ impl TableLookup {
                 // Mark that we requested from the node
                 *req = true;
             }
+            // 目前外部函数只专注于失败情况，其他情况它会调用状态判断函数判断，
+            // 这里其实只要不是失败都可以，为了完整性，依旧按正常状态返回。
+            // 其实可以改进为返回rensult,ok或err两种情况。
+            return LookupStatus::Searching;
         }
-
-        LookupStatus::Searching
+        //同上
+        LookupStatus::Completed
     }
 }
 
+//筛选迭代器中节点
 /// Picks a number of nodes from the sorted distance iterator to ping on the first round.
 fn pick_initial_nodes<'a, I>(sorted_nodes: I) -> [(NodeHandle, bool); INITIAL_PICK_NUM]
 where
@@ -538,6 +594,7 @@ where
     pick_nodes
 }
 
+//替换迭代器中节点,状态为false的或距离远的，设置状态为true
 /// Inserts the node into the slice if a slot in the slice is unused or a node
 /// in the slice is further from the target id than the node being inserted.
 fn insert_closest_nodes(nodes: &mut [(NodeHandle, bool)], target_id: InfoHash, new_node: NodeHandle) {
