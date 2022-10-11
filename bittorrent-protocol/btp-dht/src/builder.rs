@@ -37,23 +37,23 @@ impl MainlineDht {
     /// If the initial bootstrap has not finished, the search will be queued and executed once
     /// the bootstrap has completed.
     pub async fn search(&self, hash: InfoHash, announce: bool) ->Option<mpsc::UnboundedReceiver<SocketAddr>>{
-        let (tx,rx)= mpsc::unbounded_channel();
+        let (send,recv)= mpsc::unbounded_channel();
         if self
             .send
-            .send(OneshotTask::StartLookup(hash, announce,tx))
+            .send(OneshotTask::StartLookup(hash, announce,send))
             .is_err()
         {
             warn!("bittorrent-protocol_dht: MainlineDht failed to send a start lookup message...");
             return None;
         };
-        Some(rx)
+        Some(recv)
     }
 
     /// An event Receiver which will receive events occuring within the DHT.
     ///
     /// It is important to at least monitor the DHT for shutdown events as any calls
     /// after that event occurs will not be processed but no indication will be given.
-    pub fn events(&self) -> mpsc::UnboundedReceiver<DhtEvent> {
+    pub fn events(&self) -> Option<mpsc::UnboundedReceiver<DhtEvent>> {
         let (send, recv) = mpsc::unbounded_channel();
 
         if self.send.send(OneshotTask::RegisterSender(send)).is_err() {
@@ -63,9 +63,10 @@ impl MainlineDht {
             // TODO: Should we push a Shutdown event through the sender here? We would need
             // to know the cause or create a new cause for this specific scenario since the
             // client could have been lazy and wasnt monitoring this until after it shutdown!
+            return None;
         }
 
-        recv
+        Some(recv)
     }
 }
 

@@ -1,6 +1,6 @@
 use btp_dht::{DhtBuilder, Router};
 use btp_util::bt::InfoHash;
-use log::{info, LevelFilter};
+use log::{error, info, LevelFilter};
 use std::io::{self, Read};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use log4rs::append::console::{ConsoleAppender, Target};
@@ -31,8 +31,10 @@ async fn main() {
     // Spawn a thread to listen to and report events
     let mut events = dht.events();
     tokio::spawn(async move{
-        for event in events.recv().await {
-            println!("\nReceived Dht Event {:?}", event);
+        if let Some(mut events) = events{
+            for event in events.recv().await {
+                println!("\nReceived Dht Event {:?}", event);
+            }
         }
     });
 
@@ -58,11 +60,16 @@ async fn main() {
         };
 
        if let Some(mut rx) = rx {
-           let mut total = 0;
-           for addr in rx.recv().await {
-               total += 1;
-               println!("Received new peer {:?}, total unique peers {:?}",addr,total);
-           }
+           tokio::spawn(async move{
+               let mut total = 0;
+               loop {
+                if let Some(addr) = rx.recv().await{
+                       total += 1;
+                       println!("Received new peer {:?}, total unique peers {:?}",addr,total);
+                   }
+               }
+
+           });
        }
     }
 }
