@@ -81,7 +81,7 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
 
 
     let socket =dht_socket.clone();
-    let (message_tx, mut mesage_rx)=mpsc::channel::<(Vec<u8>, SocketAddr)>(10);
+    let (message_tx, mut mesage_rx)=mpsc::channel::<(Vec<u8>, SocketAddr)>(100);
     //专门用一个协程发送数据，避免 数据处理中心 阻塞。
     task::spawn(async move {
 

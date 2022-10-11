@@ -1,4 +1,4 @@
-use btp_dht::{DhtBuilder, Router};
+use btp_dht::{DhtBuilder, MainlineDht, Router};
 use btp_util::bt::InfoHash;
 use log::{error, info, LevelFilter};
 use std::io::{self, Read};
@@ -14,14 +14,11 @@ async fn main() {
     init_log();
     info!("start run .......");
 
-    let dht = DhtBuilder::new()
-        .add_router(Router::BitTorrent)
-        .add_router(Router::Custom(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(84,68,129,186),6881))))
-        .add_router(Router::Custom(SocketAddr::V4("24.38.230.49:50321".parse().unwrap())))
-        .set_source_addr(SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(0, 0, 0, 0),
-            6889,
-        )))
+    let dht = MainlineDht::builder()
+        .add_defalut_router()
+        .add_router("84.68.129.186:6881")
+        .add_routers(["24.38.230.49:50321"])
+        .set_run_port(6889)
         .set_announce_port(5432)
         .set_read_only(false)
         .start_mainline()
@@ -29,7 +26,7 @@ async fn main() {
         .unwrap();
 
     // Spawn a thread to listen to and report events
-    let mut events = dht.events();
+    let  events = dht.events();
     tokio::spawn(async move{
         if let Some(mut events) = events{
             loop {

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io;
-use std::net::{SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
+use std::str::FromStr;
 use log::warn;
 
 use tokio::{
@@ -68,6 +69,11 @@ impl MainlineDht {
 
         Some(recv)
     }
+
+    /// Start the MainlineDht with the given DhtBuilder and Handshaker.
+    pub fn builder() -> DhtBuilder {
+        DhtBuilder::new()
+    }
 }
 
 impl Drop for MainlineDht {
@@ -108,9 +114,9 @@ impl DhtBuilder {
             nodes: HashSet::new(),
             routers: HashSet::new(),
             read_only: true,
-            src_addr: net::default_route_v4(),
+            src_addr: btp_util::net::default_route_v4(),
             ext_addr: None,
-            announce_port:None,
+            announce_port: Some(6881),
         }
     }
 
@@ -127,9 +133,9 @@ impl DhtBuilder {
     /// Difference between a node and a router is that a router is never put in
     /// our routing table.
     pub fn with_router(router: Router) -> DhtBuilder {
-        let dht = DhtBuilder::new();
-
-        dht.add_router(router)
+        let mut dht = DhtBuilder::new();
+        dht.routers.insert(router);
+        dht
     }
 
     /// Add nodes which will be distributed within our routing table.
@@ -139,11 +145,49 @@ impl DhtBuilder {
         self
     }
 
+    pub fn add_nodes<T>(mut self, nodes: T) -> DhtBuilder
+    where T: IntoIterator<Item=SocketAddr>,
+    {
+        for node_addr in  nodes.into_iter(){
+            self.nodes.insert(node_addr);
+
+        }
+        self
+    }
+
+    pub fn add_defalut_router(mut self,) -> DhtBuilder {
+        self.routers.insert(Router::BitTorrent);
+        self.routers.insert(Router::uTorrent);
+        self.routers.insert(Router::BitComet);
+        self.routers.insert(Router::Transmission);
+        self
+    }
+
     /// Add a router which will let us gather nodes if our routing table is ever empty.
     ///
     /// See DhtBuilder::with_router for difference between a router and a node.
-    pub fn add_router(mut self, router: Router) -> DhtBuilder {
-        self.routers.insert(router);
+    pub fn add_router(mut self, router: &str) -> DhtBuilder {
+        match  SocketAddrV4::from_str(router){
+            Ok(addr)=>{
+                self.routers.insert(Router::Custom(SocketAddr::V4(addr)));
+            }
+            Err(_)=> log::error!("{:?}解析失败",router),
+        }
+
+        self
+    }
+
+    pub fn add_routers<'a,T>(mut self, routers: T) -> DhtBuilder
+    where  T:IntoIterator<Item=&'a str>
+    {
+        for str_router in routers.into_iter() {
+            match SocketAddrV4::from_str(str_router) {
+                Ok(addr) => {
+                    self.routers.insert(Router::Custom(SocketAddr::V4(addr)));
+                }
+                Err(_) => log::error!("{:?}解析失败",str_router),
+            }
+        }
 
         self
     }
@@ -177,6 +221,11 @@ impl DhtBuilder {
         self.src_addr = addr;
 
         self
+    }
+    pub fn set_run_port(mut self, port: u16) -> DhtBuilder {
+        self.set_source_addr(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127,0,0,1),port))
+        )
     }
 
     pub fn set_announce_port(mut self, port: u16) -> DhtBuilder {
