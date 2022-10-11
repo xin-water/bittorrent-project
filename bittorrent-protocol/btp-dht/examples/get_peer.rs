@@ -32,8 +32,10 @@ async fn main() {
     let mut events = dht.events();
     tokio::spawn(async move{
         if let Some(mut events) = events{
-            for event in events.recv().await {
-                println!("\nReceived Dht Event {:?}", event);
+            loop {
+                if let Some(event) = events.recv().await {
+                    println!("\nReceived Dht Event {:?}", event);
+                }
             }
         }
     });
