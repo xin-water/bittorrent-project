@@ -15,7 +15,6 @@ use tokio::{
     sync::{mpsc, oneshot}
 };
 use tokio::sync::mpsc::Sender;
-// use crate::bencode::Bencode;
 use crate::bencode::Bencode;
 
 use btp_util::bt::InfoHash;
