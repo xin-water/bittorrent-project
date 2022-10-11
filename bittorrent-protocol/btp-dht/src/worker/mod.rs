@@ -101,6 +101,7 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
 
 
     let table = RoutingTable::new(table::random_node_id());
+    log::warn!("dht节点id:{:?},监听地址:{:?}",&table.node_id(),dht_socket.local_addr().to_string());
     let handler = DhtHandler::new(
         table,
         command_rx,
