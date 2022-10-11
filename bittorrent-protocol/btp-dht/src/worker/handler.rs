@@ -328,18 +328,20 @@ impl DhtHandler
             router_iter,
         );
 
+        work_storage.bootstrapping = true;
+
         // Begin the bootstrap operation
         let bootstrap_status = table_bootstrap.start_bootstrap(&work_storage.message_out, timer).await;
 
-        work_storage.bootstrapping = true;
-        self.table_actions.insert(action_id, TableAction::Bootstrap(table_bootstrap, 0));
 
-        // 启动的时候 只会查找0号k桶，所以不可能出现完成事件。
+        // 启动的时候 只会向初始节点发起请求，所以不可能出现完成事件。
         match bootstrap_status {
             BootstrapStatus::Failed => {
                 self.handle_command_shutdown(ShutdownCause::Unspecified).await;
             }
-            _ => {()}
+            _ => {
+                self.table_actions.insert(action_id, TableAction::Bootstrap(table_bootstrap, 0));
+            }
         };
 
         // if bootstrap_complete {
@@ -735,6 +737,7 @@ impl DhtHandler
                 let trans_id = TransactionID::from_bytes(f.transaction_id()).unwrap();
                 let node = Node::as_good(f.node_id(), addr);
 
+                // todo 要支持ipv6时，这里应该判断本机地址类型，然后再获取对于类型的地址节点
                 // Add the payload nodes as questionable
                 for (id, v4_addr) in f.nodes() {
                     let sock_addr = SocketAddr::V4(v4_addr);
@@ -744,6 +747,7 @@ impl DhtHandler
                         .add_node(Node::as_questionable(id, sock_addr));
                 }
 
+                // match返回处理的编程风格
                 let bootstrap_complete = {
                     let opt_bootstrap = match table_actions.get_mut(&trans_id.action_id()) {
                         Some(&mut TableAction::Refresh(_)) => {
@@ -751,6 +755,7 @@ impl DhtHandler
                             None
                         }
                         Some(&mut TableAction::Bootstrap(ref mut bootstrap, _attempts)) => {
+                            //不是路由节点就加入表中
                             if !bootstrap.is_router(&node.addr()) {
                                 work_storage.routing_table.add_node(node);
                             }
@@ -779,7 +784,7 @@ impl DhtHandler
                             }
                             BootstrapStatus::Completed => {
 
-                                //直接使用 bootstrap引用 会违反可变引用唯一原则
+                                // 直接使用 bootstrap引用 会违反可变引用唯一原则
                                 // self.attempt_rebootstrap(bootstrap, attempts).await
                                 //     == Some(true)
 
