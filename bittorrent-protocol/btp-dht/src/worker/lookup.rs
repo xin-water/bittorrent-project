@@ -88,6 +88,7 @@ impl TableLookup {
         }
 
         // Call pick_initial_nodes with the all_sorted_nodes list as an iterator
+        // 拿取节点，同时修改两个队列中节点的状态
         let initial_pick_nodes = pick_initial_nodes(all_sorted_nodes.iter_mut());
         let initial_pick_nodes_filtered =
             initial_pick_nodes
@@ -174,18 +175,15 @@ impl TableLookup {
 
         // Check if we beat the distance, get the next distance to beat
 
-        let mut send_iterate_nodes: Option<[(NodeHandle,bool);3]> = None;
+        let mut send_iterate_nodes: Option<[(NodeHandle,bool);ITERATIVE_PICK_NUM]> = None;
         let mut next_dist_to_beat = dist_to_beat;
 
-        if opt_nodes.is_none(){
-                //(None, dist_to_beat)
-                //send_iterate_nodes = None;
-                //next_dist_to_beat = dist_to_beat;
-        }{
+        if let Some(nodes) = opt_nodes {
+
                 let requested_nodes = &self.requested_nodes;
 
                 //接收到的、未发送过请求的节点
-                let nodehandles=opt_nodes.unwrap()
+                let nodehandles=nodes
                     .into_iter()
                     .map(|(id,addr)|{
                         NodeHandle::new(id, SocketAddr::V4(addr))
@@ -195,12 +193,8 @@ impl TableLookup {
                     })
                     .collect::<Vec<NodeHandle>>();
 
-                if nodehandles.len() == 0 {
-                    //(None, dist_to_beat)
-                    //send_iterate_nodes = None;
-                    //next_dist_to_beat = dist_to_beat;
-                }else {
-
+                if nodehandles.len() != 0 {
+                    log::trace!("找到新节点:{:?}个",nodehandles.len());
                     // Get the closest distance (or the current distance)
                     let nood_dist_to_beat :DistanceToBeat= nodehandles
                         .iter()
@@ -224,7 +218,6 @@ impl TableLookup {
                         for nodehandle in nodehandles {
                             insert_sorted_node(&mut self.all_sorted_nodes, self.target_id, nodehandle, false);
                         }
-                       // (None,dist_to_beat)
                         //send_iterate_nodes = None;
                         //next_dist_to_beat = dist_to_beat;
                     } else {
@@ -238,13 +231,13 @@ impl TableLookup {
                                 .copied(),
                             self.target_id,
                         );
+                        log::trace!("提取{:?}个节点准备发起请求",iterate_nodes.len());
 
                         // Push nodes into the all nodes list
                         for nodehandle in nodehandles {
                             //判断它是否为发送节点
                             let will_ping = iterate_nodes
                                 .iter()
-                                //todo 他们是同一个吗？用指针判断？还是实现了相等判断接口？
                                 .any(|(n, _)| {
                                     *n == nodehandle
                                 });
@@ -290,7 +283,9 @@ impl TableLookup {
         if let Some(values) = opt_values {
             for v4_addr in values {
                 let sock_addr = SocketAddr::V4(v4_addr);
-                self.tx.send(sock_addr);
+                if self.tx.send(sock_addr).is_err(){
+                    log::error!("peer:{:?}发送失败",sock_addr.to_string());
+                }
             }
         }
 
@@ -454,6 +449,7 @@ impl TableLookup {
                 // 通道发送失败，直接终止，
                 return LookupStatus::Failed;
             }
+            log::trace!("bittorrent-protocol_dht: start_request_round 向节点：{:?}请求 peer ",node.id);
 
             // We requested from the node, mark it down
             self.requested_nodes.insert(*node);
@@ -487,7 +483,7 @@ impl TableLookup {
     {
         // Entering the endgame phase
         self.in_endgame = true;
-
+        warn!("start_endgame_round");
         // Try to start a global message timeout for the endgame
         let timeout = timer.schedule_in(ENDGAME_TIMEOUT_MS,ScheduledTask::CheckLookupEndGame(self.id_generator.generate()));
 
