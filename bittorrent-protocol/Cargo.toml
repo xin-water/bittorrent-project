@@ -4,8 +4,8 @@ version = "0.3.0-bate2"
 authors = ["xinwater <1872407021@qq.com>"]
 edition = "2021"
 description = "Bittorrent Protocol Library"
-homepage    = "https://github.com/xin-water/bittorrent-project/tree/master/bittorrent-protocol"
-repository  = "https://github.com/xin-water/bittorrent-project/tree/master/bittorrent-protocol"
+homepage    = "https://github.com/xin-water/bittorrent-project/tree/dev/bittorrent-protocol"
+repository  = "https://github.com/xin-water/bittorrent-project/tree/dev/bittorrent-protocol"
 keywords    = [ "bittorrent", "bencode", "tracker", "dht", "utp" ]
 license     = "LGPL3"
 
