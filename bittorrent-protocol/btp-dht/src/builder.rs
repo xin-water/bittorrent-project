@@ -224,7 +224,10 @@ impl DhtBuilder {
     }
     pub fn set_run_port(mut self, port: u16) -> DhtBuilder {
         self.set_source_addr(
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127,0,0,1),port))
+            // 使用`127.0.0.1`会无法发送udp数据包，其他语言我记得用回环地址可以
+            // SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127,0,0,1),port))
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0),port))
+
         )
     }
 
