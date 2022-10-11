@@ -71,7 +71,9 @@ fn main() {
     });
 
     // let hash = InfoHash::from_bytes(b"My Unique Info Hash");
-    let hash = InfoHash::from_bytes(b"d1101a2b9d202811a05e8c57c557a20bf974dc8a");
+    //let hash = InfoHash::from_bytes(b"d1101a2b9d202811a05e8c57c557a20bf974dc8a");
+    let bytes= hex::decode("3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0").unwrap();
+    let hash = InfoHash::from_hash(&bytes).unwrap();
 
     // Let the user announce or search on our info hash
     let stdin = io::stdin();
