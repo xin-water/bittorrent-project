@@ -32,8 +32,9 @@ pub struct TableBootstrap {
     table_id: NodeId,
     id_generator: MIDGenerator,
     starting_nodes: Vec<SocketAddr>,
-    active_messages: HashMap<TransactionID, Timeout>,
     starting_routers: HashSet<SocketAddr>,
+    active_messages: HashMap<TransactionID, Timeout>,
+    messages_sent_num: u32,
     curr_bootstrap_bucket: usize,
     pub(crate) is_completed: bool,
 }
@@ -56,6 +57,7 @@ impl TableBootstrap {
             starting_nodes: nodes,
             starting_routers: router_filter,
             active_messages: HashMap::new(),
+            messages_sent_num: 0,
             curr_bootstrap_bucket: 0,
             is_completed:false,
         }
@@ -69,6 +71,7 @@ impl TableBootstrap {
     //     self.active_messages.is_empty()
     // }
 
+    // 向所有的路由发起查找自己请求，只注册一个定时事件，只返回失败或运行中两种状态
     pub(crate) async fn start_bootstrap(
         &mut self,
         out: &Sender<(Vec<u8>,SocketAddr)>,
@@ -112,6 +115,9 @@ impl TableBootstrap {
         self.starting_routers.contains(&addr)
     }
 
+    // 接收到查询响应后移除定时器事件，从活跃队列中移除该信息，
+    // 判断活跃信息数，如果为0就启动下一个k桶节点查询。
+    // todo 算法是以查询 160个K桶为中心，偏向于广度，没有对目标地址递归深入查询。
     pub(crate) async fn recv_response<'a>(
         &mut self,
         trans_id: &TransactionID,
@@ -145,13 +151,30 @@ impl TableBootstrap {
         }
 
         // Check if we need to bootstrap on the next bucket
-        if self.active_messages.is_empty() {
-            return self.bootstrap_next_bucket(table, out, timer).await;
+        if !self.is_completed && self.active_messages.is_empty() {
+            loop {
+
+                if  self.bootstrap_next_bucket(table, out, timer).await == BootstrapStatus::Failed{
+                    return BootstrapStatus::Failed;
+                }
+
+                self.curr_bootstrap_bucket += 1;
+
+                if self.curr_bootstrap_bucket == table::MAX_BUCKETS {
+                    self.is_completed = true;
+                    return self.current_bootstrap_status();
+                } else if self.messages_sent_num != 0 {
+                    return BootstrapStatus::Bootstrapping;
+                } else {
+                    log::trace!("bucket-{:?}- no find node",self.curr_bootstrap_bucket);
+                }
+            }
         }
 
         self.current_bootstrap_status()
     }
 
+    //逻辑与recv_response相同
     pub(crate) async fn recv_timeout(
         &mut self,
         trans_id: &TransactionID,
@@ -171,15 +194,36 @@ impl TableBootstrap {
         log::trace!( "bootstrap_recv_timeout: remove trans_id :{:?}",trans_id);
 
         // Check if we need to bootstrap on the next bucket
-        if self.active_messages.is_empty() {
-            return self.bootstrap_next_bucket(table, out, timer).await;
+        if !self.is_completed && self.active_messages.is_empty() {
+            loop {
+
+                if  self.bootstrap_next_bucket(table, out, timer).await == BootstrapStatus::Failed{
+                    return BootstrapStatus::Failed;
+                }
+
+                self.curr_bootstrap_bucket += 1;
+
+                if self.curr_bootstrap_bucket == table::MAX_BUCKETS {
+                    self.is_completed = true;
+                    return self.current_bootstrap_status();
+                } else if self.messages_sent_num != 0 {
+                    return BootstrapStatus::Bootstrapping;
+                } else {
+                    log::trace!("bucket-{:?}- no find node",self.curr_bootstrap_bucket);
+                }
+            }
         }
 
         self.current_bootstrap_status()
     }
 
     // Returns true if there are more buckets to bootstrap, false otherwise
-    #[async_recursion]
+    // 查询下一个K桶地址，
+    // 1、先计算出一个属于k桶的地址，
+    // 2、从表取出离地址最近的8个节点，
+    // 3、判断桶在不在表中，不在则生成桶
+    // 4、调用发送函数发起请求。
+    //#[async_recursion]
     async fn bootstrap_next_bucket(
         &mut self,
         table: &mut RoutingTable,
@@ -256,7 +300,11 @@ impl TableBootstrap {
         }
     }
 
-    #[async_recursion]
+    //请求发送函数，
+    //1、向给出的节点发起请求
+    //2、记录发送消息数给上级使用
+
+    // #[async_recursion]
     async fn send_bootstrap_requests(
         &mut self,
         nodes: &[NodeHandle],
@@ -271,7 +319,7 @@ impl TableBootstrap {
             self.curr_bootstrap_bucket
         );
 
-        let mut messages_sent = 0;
+        self.messages_sent_num = 0;
 
         for node in nodes {
             // Generate a transaction id
@@ -296,18 +344,11 @@ impl TableBootstrap {
             // Create an entry for the timeout in the map
             self.active_messages.insert(trans_id, timeout);
 
-            messages_sent += 1;
+            self.messages_sent_num += 1;
         }
 
-        self.curr_bootstrap_bucket += 1;
-        if self.curr_bootstrap_bucket == table::MAX_BUCKETS {
-            self.is_completed = true;
-            self.current_bootstrap_status()
-        } else if messages_sent == 0 {
-            self.bootstrap_next_bucket(table, out, timer).await
-        } else {
-            return BootstrapStatus::Bootstrapping;
-        }
+        return BootstrapStatus::Bootstrapping;
+
     }
 
     fn current_bootstrap_status(&self) -> BootstrapStatus {
