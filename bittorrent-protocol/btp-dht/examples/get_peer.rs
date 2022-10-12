@@ -16,8 +16,7 @@ async fn main() {
 
     let dht = MainlineDht::builder()
         .add_defalut_router()
-        .add_router("84.68.129.186:6881")
-        .add_routers(["24.38.230.49:50321"])
+        .add_nodes_str(["24.38.230.49:50321","84.68.129.186:6881"])
         .set_run_port(6889)
         .set_announce_port(5432)
         .set_read_only(false)

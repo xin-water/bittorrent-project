@@ -155,6 +155,20 @@ impl DhtBuilder {
         self
     }
 
+    pub fn add_nodes_str<'a,T>(mut self, nodes: T) -> DhtBuilder
+        where T: IntoIterator<Item=&'a str>,
+    {
+        for str_addr in  nodes.into_iter(){
+            match SocketAddrV4::from_str(str_addr) {
+                Ok(node_addr) => {
+                    self.nodes.insert(SocketAddr::V4(node_addr));
+                }
+                Err(_) => log::error!("{:?}解析失败",str_addr),
+            }
+        }
+        self
+    }
+
     pub fn add_defalut_router(mut self,) -> DhtBuilder {
         self.routers.insert(Router::BitTorrent);
         self.routers.insert(Router::uTorrent);
