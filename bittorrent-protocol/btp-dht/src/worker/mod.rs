@@ -88,17 +88,11 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
     //专门用一个协程发送数据，避免 数据处理中心 阻塞。
     task::spawn(async move {
 
-        // for (buffer,addr) in mesage_rx.recv().await{
-        //     socket.send(&buffer,addr).await;
-        // }
-
-        // 这跟上面有啥区别，用上面会出现 发送端发送失败。
-        // 通道返回的是option,如果发送端都终止了，这里怎么知道？怎么在发送端终止时退出呢？
-        loop {
-            if let Some((buffer,addr)) = message_rx.recv().await{
+        log::info!("消息发送协程已启动");
+        while let Some((buffer,addr)) = message_rx.recv().await{
                 socket.send(&buffer,addr).await;
-            }
         }
+        log::warn!("消息发送协程已退出");
 
     });
 

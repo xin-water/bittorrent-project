@@ -60,12 +60,13 @@ async fn main() {
        if let Some(mut rx) = rx {
            tokio::spawn(async move{
                let mut total = 0;
-               loop {
-                if let Some(addr) = rx.recv().await{
-                       total += 1;
-                       println!("Received new peer {:?}, total unique peers {:?}",addr,total);
-                   }
+
+               while let Some(addr) = rx.recv().await {
+                   total += 1;
+                   println!("Received new peer {:?}, total unique peers {:?}",addr,total);
                }
+
+               println!("search end");
 
            });
        }
@@ -85,7 +86,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Warn),
         )
         .unwrap();
 
