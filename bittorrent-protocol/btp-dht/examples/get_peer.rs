@@ -28,11 +28,11 @@ async fn main() {
     let  events = dht.events();
     tokio::spawn(async move{
         if let Some(mut events) = events{
-            loop {
-                if let Some(event) = events.recv().await {
-                    println!("\nReceived Dht Event {:?}", event);
-                }
+
+            while let Some(event) = events.recv().await {
+                println!("\nReceived Dht Event {:?}", event);
             }
+
         }
     });
 
@@ -86,7 +86,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Warn),
+                .build(LevelFilter::Trace),
         )
         .unwrap();
 
