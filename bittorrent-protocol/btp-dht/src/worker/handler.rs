@@ -71,7 +71,7 @@ enum TableAction {
 /// Actions that we want to perform on our RoutingTable after bootstrapping finishes.
 enum PostBootstrapAction {
     /// Future lookup action.
-    Lookup(InfoHash, bool, mpsc::UnboundedSender<SocketAddr>),
+    Lookup(InfoHash, bool, Option<mpsc::Sender<SocketAddr>>),
     /// Future refresh action.
     Refresh(TableRefresh, TransactionID),
 }
@@ -120,10 +120,12 @@ impl DhtHandler
         let mut mid_generator = aid_generator.generate();
         let refresh_trans_id = mid_generator.generate();
         let table_refresh = TableRefresh::new(mid_generator);
-        let future_actions = vec![PostBootstrapAction::Refresh(
-            table_refresh,
-            refresh_trans_id,
-        )];
+
+        // 添加哈希树深度构建任务与节点保活刷新任务到预处理任务队列
+        let future_actions = vec![
+            PostBootstrapAction::Lookup(table.node_id(),false,None),
+            PostBootstrapAction::Refresh(table_refresh, refresh_trans_id, ),
+        ];
 
 
         let detached = DetachedDhtHandler {
@@ -441,7 +443,7 @@ impl DhtHandler
         &mut self,
         info_hash: InfoHash,
         should_announce: bool,
-        tx:mpsc::UnboundedSender<SocketAddr>,
+        tx: Option<mpsc::Sender<SocketAddr>>,
     )
     {
         let mid_generator = self.detached.aid_generator.generate();

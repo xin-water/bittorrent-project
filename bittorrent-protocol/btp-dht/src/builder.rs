@@ -37,11 +37,11 @@ impl MainlineDht {
     ///
     /// If the initial bootstrap has not finished, the search will be queued and executed once
     /// the bootstrap has completed.
-    pub async fn search(&self, hash: InfoHash, announce: bool) ->Option<mpsc::UnboundedReceiver<SocketAddr>>{
-        let (send,recv)= mpsc::unbounded_channel();
+    pub async fn search(&self, hash: InfoHash, announce: bool) ->Option<mpsc::Receiver<SocketAddr>>{
+        let (send,recv)= mpsc::channel::<SocketAddr>(200);
         if self
             .send
-            .send(OneshotTask::StartLookup(hash, announce,send))
+            .send(OneshotTask::StartLookup(hash, announce,Some(send)))
             .is_err()
         {
             warn!("bittorrent-protocol_dht: MainlineDht failed to send a start lookup message...");

@@ -59,7 +59,7 @@ pub struct TableLookup {
     // Storing whether or not it has ever been pinged so that we
     // can perform the brute force lookup if the lookup failed
     all_sorted_nodes: Vec<(Distance, NodeHandle, bool)>,
-    tx: mpsc::UnboundedSender<SocketAddr>,
+    tx: Option<mpsc::Sender<SocketAddr>>,
 }
 
 // Gather nodes
@@ -72,7 +72,7 @@ impl TableLookup {
         will_announce: bool,
         table: &mut RoutingTable,
         out: &mpsc::Sender<(Vec<u8>,SocketAddr)>,
-        tx: mpsc::UnboundedSender<SocketAddr>,
+        tx: Option<mpsc::Sender<SocketAddr>>,
         timer: &mut Timer<ScheduledTask>,
     ) -> Option<TableLookup>
 
@@ -281,10 +281,12 @@ impl TableLookup {
         }
 
         if let Some(values) = opt_values {
-            for v4_addr in values {
-                let sock_addr = SocketAddr::V4(v4_addr);
-                if self.tx.send(sock_addr).is_err(){
-                    log::error!("peer:{:?}发送失败",sock_addr.to_string());
+            if let Some(send) = self.tx.as_ref() {
+                for v4_addr in values {
+                    let sock_addr = SocketAddr::V4(v4_addr);
+                    if send.send(sock_addr).await.is_err(){
+                        log::error!("peer:{:?}发送失败",sock_addr.to_string());
+                    }
                 }
             }
         }

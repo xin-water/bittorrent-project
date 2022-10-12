@@ -29,7 +29,7 @@ pub enum OneshotTask {
     /// Load a new bootstrap operation into worker storage.
     StartBootstrap(Vec<Router>, Vec<SocketAddr>),
     /// Start a lookup for the given InfoHash.
-    StartLookup(InfoHash, bool ,mpsc::UnboundedSender<SocketAddr>),
+    StartLookup(InfoHash, bool ,Option<mpsc::Sender<SocketAddr>>),
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
 }
@@ -79,9 +79,12 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
     let udp_socket = UdpSocket::bind(&builder.src_addr).await?;
     let dht_socket = Arc::new(DhtSocket::new(udp_socket)?);
 
+    let table = RoutingTable::new(table::random_node_id());
 
+
+    // 专门用一个协程发送数据，避免 数据处理中心 阻塞。
     let socket =dht_socket.clone();
-    let (message_tx, mut mesage_rx)=mpsc::channel::<(Vec<u8>, SocketAddr)>(100);
+    let (message_tx, mut message_rx)=mpsc::channel::<(Vec<u8>, SocketAddr)>(100);
     //专门用一个协程发送数据，避免 数据处理中心 阻塞。
     task::spawn(async move {
 
@@ -92,7 +95,7 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
         // 这跟上面有啥区别，用上面会出现 发送端发送失败。
         // 通道返回的是option,如果发送端都终止了，这里怎么知道？怎么在发送端终止时退出呢？
         loop {
-            if let Some((buffer,addr)) = mesage_rx.recv().await{
+            if let Some((buffer,addr)) = message_rx.recv().await{
                 socket.send(&buffer,addr).await;
             }
         }
@@ -100,19 +103,8 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
     });
 
 
-    let table = RoutingTable::new(table::random_node_id());
-
-    let handler = DhtHandler::new(
-        table,
-        command_rx,
-        dht_socket,
-        message_tx,
-        builder.read_only,
-        builder.announce_port
-    );
-    task::spawn(handler.run());
-
-
+    // 提交 “哈希树广度构建任务” 到消息队列，StartBootstrap负责访问引导节点，快速构建节点哈希树，
+    // 大致会为前0～20号桶填充节点，后面桶由于子树本身范围变小，深度较深，可能会没有节点
     let nodes: Vec<SocketAddr> = builder.nodes.into_iter().collect();
     let routers: Vec<Router> = builder.routers.into_iter().collect();
     if command_tx
@@ -123,6 +115,30 @@ pub  async fn start_dht(builder: DhtBuilder)->io::Result<mpsc::UnboundedSender<O
                 "bittorrent-protocol_dt: MainlineDht failed to send a start bootstrap message..."
             );
     }
+
+    // 提交 “哈希表树深度构建任务” 到消息队列，
+    // 它会以自身id为目标节点，递归查询，不断查找离自身更近的节点，构建20～159号桶。
+    // 由于drop为同步方法，故只能使用发送时同步的通道，
+    // 半异步通道只能缓存一个任务，所以该任务放到handler new方法中，直接放入预处理任务队列。
+
+
+    // 节点自动刷新保活任务，为简化程序，该任务在handler构建时放入等待任务队列，节点启动后自动执行
+
+
+    // 处理中心，他会构建一个循环，三个数据入口：
+    // 1号入口：外部命令入口，负责处理外部命令
+    // 2号入口：socket消息入口，负责处理从网络中读取到的消息
+    // 3号入口：定时器，负责处理超时情况
+    let handler = DhtHandler::new(
+        table,
+        command_rx,
+        dht_socket,
+        message_tx,
+        builder.read_only,
+        builder.announce_port
+    );
+    task::spawn(handler.run());
+
 
 
     Ok(command_tx)
