@@ -46,12 +46,14 @@ async fn main() {
     let hash = InfoHash::from_hex("3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
 
 
-    println!("\n InfoHash is: {:?}", &hash);
     // Let the user announce or search on our info hash
     let stdin = io::stdin();
     let stdin_lock = stdin.lock();
     for byte in stdin_lock.bytes() {
-       let rx= match &[byte.unwrap()] {
+
+        println!("\n InfoHash is: {:?}", &hash);
+
+        let rx= match &[byte.unwrap()] {
             b"a" => dht.search(hash.into(), true).await,
             b"s" => dht.search(hash.into(), false).await,
             _ => None,
