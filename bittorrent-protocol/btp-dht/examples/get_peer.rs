@@ -45,6 +45,13 @@ async fn main() {
 
     let hash = InfoHash::from_hex("3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
 
+    if !dht.bootstrapped().await {
+        log::error!("dht 启动失败，程序退出！");
+        return;
+    }
+    println!(">> ");
+    println!("    s    search for the specified ubuntu-22.04.1-desktop-amd64.iso");
+    println!("    a    announce the specified ubuntu-22.04.1-desktop-amd64.iso");
 
     // Let the user announce or search on our info hash
     let stdin = io::stdin();
