@@ -327,6 +327,7 @@ impl DhtHandler
     fn handle_get_dht_values(&mut self,tx: mpsc::UnboundedSender<DhtValues>) {
 
         tx.send(DhtValues {
+            dht_address: self.detached.message_in.local_addr(),
             dht_status: self.status,
             good_node_count: self.detached.routing_table.num_good_nodes(),
             questionable_node_count: self.detached.routing_table.num_questionable_nodes(),

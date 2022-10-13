@@ -1,4 +1,4 @@
-use btp_dht::{DhtBuilder, MainlineDht, Router};
+use btp_dht::MainlineDht;
 use btp_util::bt::InfoHash;
 use log::{error, info, LevelFilter};
 use std::io::{self, Read};

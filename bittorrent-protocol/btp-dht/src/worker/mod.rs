@@ -78,6 +78,7 @@ pub enum ShutdownCause {
 
 #[derive(Copy, Clone, Debug)]
 pub struct DhtValues {
+    pub dht_address: SocketAddr,
     pub dht_status: DhtStatus,
     pub good_node_count: usize,
     pub questionable_node_count: usize,
