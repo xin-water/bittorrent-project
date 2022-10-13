@@ -240,6 +240,12 @@ impl DhtHandler
             OneshotTask::StartLookup(info_hash, should_announce,tx) => {
                 self.handle_start_lookup(info_hash, should_announce, tx).await;
             }
+            OneshotTask::SelfLookup => {
+                self.handle_start_lookup(
+                    self.detached.routing_table.node_id(),
+                    false,
+                    None).await;
+            }
         }
     }
 
@@ -327,6 +333,7 @@ impl DhtHandler
     fn handle_get_dht_values(&mut self,tx: mpsc::UnboundedSender<DhtValues>) {
 
         tx.send(DhtValues {
+            dht_id: self.detached.routing_table.node_id(),
             dht_address: self.detached.message_in.local_addr(),
             dht_status: self.status,
             good_node_count: self.detached.routing_table.num_good_nodes(),

@@ -53,6 +53,7 @@ async fn main() {
     println!(">> ");
     println!("    s    search for the specified ubuntu-22.04.1-desktop-amd64.iso");
     println!("    a    announce the specified ubuntu-22.04.1-desktop-amd64.iso");
+    println!("    d    search for the dht node_id");
     println!("    l    list dht value");
     println!("    q    quit");
 
@@ -73,6 +74,11 @@ async fn main() {
                 println!("\n InfoHash is: {:?}", &hash);
                 if let Some(rx) = dht.search(hash.into(), false).await{
                     tokio::spawn(print_peer(rx));
+                }
+            },
+            b"d" => {
+                if dht.self_lookup(){
+                   println!(" self_lookup message send success");
                 }
             },
             b"l" => {
@@ -112,7 +118,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Warn),
+                .build(LevelFilter::Trace),
         )
         .unwrap();
 

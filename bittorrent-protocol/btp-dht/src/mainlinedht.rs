@@ -50,6 +50,18 @@ impl MainlineDht {
         Some(recv)
     }
 
+    pub fn self_lookup(&self) ->bool {
+        if self
+            .send
+            .send(OneshotTask::SelfLookup)
+            .is_err()
+        {
+            warn!("bittorrent-protocol_dht: MainlineDht failed to send a start lookup message...");
+            return false;
+        };
+        true
+    }
+
     /// An event Receiver which will receive events occuring within the DHT.
     ///
     /// It is important to at least monitor the DHT for shutdown events as any calls

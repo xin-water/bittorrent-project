@@ -34,6 +34,8 @@ pub enum OneshotTask {
     StartBootstrap(Vec<Router>, Vec<SocketAddr>),
     /// Start a lookup for the given InfoHash.
     StartLookup(InfoHash, bool ,Option<mpsc::Sender<SocketAddr>>),
+    /// lookup self
+    SelfLookup,
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
 }
@@ -78,6 +80,7 @@ pub enum ShutdownCause {
 
 #[derive(Copy, Clone, Debug)]
 pub struct DhtValues {
+    pub dht_id: InfoHash,
     pub dht_address: SocketAddr,
     pub dht_status: DhtStatus,
     pub good_node_count: usize,
