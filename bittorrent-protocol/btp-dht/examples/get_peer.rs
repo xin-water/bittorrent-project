@@ -7,6 +7,7 @@ use log4rs::append::console::{ConsoleAppender, Target};
 use log4rs::Config;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
+use tokio::sync::mpsc::Receiver;
 
 #[tokio::main]
 async fn main() {
@@ -52,34 +53,50 @@ async fn main() {
     println!(">> ");
     println!("    s    search for the specified ubuntu-22.04.1-desktop-amd64.iso");
     println!("    a    announce the specified ubuntu-22.04.1-desktop-amd64.iso");
+    println!("    l    list dht value");
+    println!("    q    quit");
+
 
     // Let the user announce or search on our info hash
     let stdin = io::stdin();
     let stdin_lock = stdin.lock();
     for byte in stdin_lock.bytes() {
 
-        println!("\n InfoHash is: {:?}", &hash);
+        match &[byte.unwrap()] {
+            b"a" => {
+                println!("\n InfoHash is: {:?}", &hash);
+                if let Some(rx) = dht.search(hash.into(), true).await{
+                    tokio::spawn(print_peer(rx));
+                }
+            },
+            b"s" => {
+                println!("\n InfoHash is: {:?}", &hash);
+                if let Some(rx) = dht.search(hash.into(), false).await{
+                    tokio::spawn(print_peer(rx));
+                }
+            },
+            b"l" => {
+                if let Some(v) = dht.getValues().await{
+                   println!("{:?}",v)
+                }
+            },
+            b"q" => return,
 
-        let rx= match &[byte.unwrap()] {
-            b"a" => dht.search(hash.into(), true).await,
-            b"s" => dht.search(hash.into(), false).await,
-            _ => None,
+            _ => (),
         };
 
-       if let Some(mut rx) = rx {
-           tokio::spawn(async move{
-               let mut total = 0;
-
-               while let Some(addr) = rx.recv().await {
-                   total += 1;
-                   println!("Received new peer {:?}, total unique peers {:?}",addr,total);
-               }
-
-               println!("search end");
-
-           });
-       }
     }
+}
+
+async fn print_peer(mut rx: Receiver<SocketAddr>){
+    let mut total = 0;
+
+    while let Some(addr) = rx.recv().await {
+        total += 1;
+        println!("Received new peer {:?}, total unique peers {:?}", addr, total);
+    }
+
+    println!("search end");
 }
 
 fn init_log() {
@@ -95,7 +112,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Warn),
         )
         .unwrap();
 
