@@ -13,8 +13,11 @@ use crate::worker::ScheduledTask;
 use crate::worker::timer::Timer;
 
 const REFRESH_INTERVAL_TIMEOUT: Duration = Duration::from_millis(6000);
+const REFRESH_0_TIMEOUT: Duration = Duration::from_millis(3000);
+
 const REFRESH_CONCURRENCY: usize = 4;
 
+#[derive(Eq, PartialEq)]
 pub enum RefreshStatus {
     /// Refresh is in progress.
     Refreshing,
@@ -25,6 +28,7 @@ pub enum RefreshStatus {
 pub struct TableRefresh {
     id_generator: MIDGenerator,
     curr_refresh_bucket: usize,
+    send_message_num: u8,
 }
 
 impl TableRefresh {
@@ -32,6 +36,7 @@ impl TableRefresh {
         TableRefresh {
             id_generator: id_generator,
             curr_refresh_bucket: 0,
+            send_message_num: 0,
         }
     }
 
@@ -43,6 +48,29 @@ impl TableRefresh {
     ) -> RefreshStatus
 
     {
+
+        if self.refresh_next_bucket(table, out).await == RefreshStatus::Failed {
+            return RefreshStatus::Failed;
+        }
+
+        self.curr_refresh_bucket += 1;
+
+        // Generate a dummy transaction id (only the action id will be used)
+        let trans_id = self.id_generator.generate();
+        if self.send_message_num != 0 {
+            // Start a timer for the next refresh
+            timer.schedule_in(REFRESH_INTERVAL_TIMEOUT.into(), ScheduledTask::CheckTableRefresh(trans_id));
+        }else {
+            timer.schedule_in(REFRESH_0_TIMEOUT.into(), ScheduledTask::CheckTableRefresh(trans_id));
+        }
+        return RefreshStatus::Refreshing;
+
+    }
+
+    async fn refresh_next_bucket(&mut self, table: &mut RoutingTable, out: &Sender<(Vec<u8>, SocketAddr)>) -> RefreshStatus
+    {
+        self.send_message_num = 0;
+
         if self.curr_refresh_bucket == table::MAX_BUCKETS {
             self.curr_refresh_bucket = 0;
         }
@@ -61,7 +89,9 @@ impl TableRefresh {
             .map(|node| *node.handle())
             .collect::<Vec<_>>();
 
-        for  node in nodes
+        log::warn!("Refresh nodes num:{:?}",nodes.len());
+
+        for node in nodes
         {
             // Generate a transaction id for the request
             let trans_id = self.id_generator.generate();
@@ -84,20 +114,14 @@ impl TableRefresh {
             if let Some(node) = table.find_node_mut(&node) {
                 node.local_request();
             }
+            self.send_message_num += 1;
         }
-
-        // Generate a dummy transaction id (only the action id will be used)
-        let trans_id = self.id_generator.generate();
-
-        // Start a timer for the next refresh
-        timer.schedule_in(REFRESH_INTERVAL_TIMEOUT.into(),ScheduledTask::CheckTableRefresh(trans_id));
-
-        self.curr_refresh_bucket += 1;
 
         RefreshStatus::Refreshing
     }
-}
 
+
+}
 /// Panics if index is out of bounds.
 fn flip_id_bit_at_index(node_id: NodeId, index: usize) -> NodeId {
     let mut id_bytes: [u8; bt::NODE_ID_LEN] = node_id.into();
