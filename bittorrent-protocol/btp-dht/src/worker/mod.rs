@@ -32,6 +32,8 @@ pub enum OneshotTask {
     StartLookup(InfoHash, bool ,Option<mpsc::Sender<SocketAddr>>),
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
+    ///
+    GetBootstrapStatus(mpsc::UnboundedSender<bool>),
 }
 
 /// Task that our DHT will execute some time later.

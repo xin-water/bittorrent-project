@@ -76,9 +76,18 @@ enum PostBootstrapAction {
     Refresh(TableRefresh, TransactionID),
 }
 
+#[derive(Eq, PartialEq)]
+pub enum DhtStatus{
+    Init,
+    BootStrapIng,
+    Fail,
+    Completed,
+}
+
 /// Storage for our EventLoop to invoke actions upon.
 pub struct DhtHandler {
-    runing: bool,
+    status: DhtStatus,
+    status_tx: Vec<mpsc::UnboundedSender<bool>>,
     detached: DetachedDhtHandler,
     table_actions: HashMap<ActionID, TableAction>,
     command_rx: mpsc::UnboundedReceiver<OneshotTask>,
@@ -95,7 +104,6 @@ struct DetachedDhtHandler {
     announce_port: Option<u16>,
     token_store: TokenStore,
     aid_generator: AIDGenerator,
-    bootstrapping: bool,
     routing_table: RoutingTable,
     active_stores: AnnounceStorage,
     // If future actions is not empty, that means we are still bootstrapping
@@ -135,7 +143,6 @@ impl DhtHandler
             message_out: message_out,
             token_store: TokenStore::new(),
             aid_generator: aid_generator,
-            bootstrapping: false,
             routing_table: table,
             active_stores: AnnounceStorage::new(),
             future_actions: future_actions,
@@ -146,7 +153,8 @@ impl DhtHandler
 
 
         DhtHandler {
-            runing: true,
+            status: DhtStatus::Init,
+            status_tx: Vec::new(),
             timer: timer,
             detached: detached,
             table_actions: HashMap::new(),
@@ -155,7 +163,7 @@ impl DhtHandler
     }
 
     pub async fn run(mut self){
-        while self.runing {
+        while self.status != DhtStatus::Fail {
             self.run_one().await
         }
     }
@@ -217,7 +225,7 @@ impl DhtHandler
     }
 
     fn shutdown(&mut self){
-        self.runing = false ;
+        self.status = DhtStatus::Fail ;
     }
 
     async fn handle_command(&mut self, command: OneshotTask){
@@ -233,6 +241,9 @@ impl DhtHandler
             }
             OneshotTask::StartLookup(info_hash, should_announce,tx) => {
                 self.handle_start_lookup(info_hash, should_announce, tx).await;
+            }
+            OneshotTask::GetBootstrapStatus(tx) => {
+                self.handle_get_bootstarpped(tx).await;
             }
         }
     }
@@ -296,12 +307,24 @@ impl DhtHandler
 
     async fn handle_command_shutdown(&mut self, cause: ShutdownCause)
     {
-
+        self.status_tx.retain(|tx|{
+            tx.send(false).expect("dht strapped message send fail ");
+            false
+        });
         self.broadcast_dht_event(DhtEvent::ShuttingDown(cause)).await;
 
         self.shutdown();
     }
 
+
+    async fn handle_get_bootstarpped(&mut self,tx: mpsc::UnboundedSender<bool>) {
+
+        match self.status {
+            DhtStatus::Fail=>{tx.send(false).expect("bootstarpped status send fail")}
+            DhtStatus::Completed=>{tx.send(true).expect("bootstarpped status send fail")}
+            _ => {self.status_tx.push(tx)}
+        }
+    }
 
     fn handle_register_sender(&mut self, sender: mpsc::UnboundedSender<DhtEvent>) {
         self.detached.event_notifiers.push(sender);
@@ -330,7 +353,10 @@ impl DhtHandler
             router_iter,
         );
 
-        work_storage.bootstrapping = true;
+        //广度构建任务可执行多次，所以在原来已经是正常状态时不应该修改状态
+        if self.status !=DhtStatus::Completed {
+            self.status = DhtStatus::BootStrapIng;
+        }
 
         // Begin the bootstrap operation
         let bootstrap_status = table_bootstrap.start_bootstrap(&work_storage.message_out, timer).await;
@@ -375,8 +401,10 @@ impl DhtHandler
             if self.num_good_nodes() == 0 {
                 // Failed to get any nodes in the rebootstrap attempts, shut down
                 self.handle_command_shutdown(ShutdownCause::BootstrapFailed).await;
+                //启动失败
                 None
             } else {
+                //不需要重启
                 Some(true)
             }
         } else {
@@ -392,6 +420,7 @@ impl DhtHandler
                     None
                 }
                 _ => {
+                    //需要重启
                     Some(false)
                 }
             }
@@ -405,13 +434,19 @@ impl DhtHandler
         action_id: ActionID
     )
     {
+        // Indicates we are out of the bootstrapping phase
+        self.status = DhtStatus::Completed;
+
+        self.status_tx.retain(|tx|{
+            tx.send(true).expect("dht strapped message send fail ");
+            false
+        });
+
         // Send notification that the bootstrap has completed.
         self.broadcast_dht_event(
             DhtEvent::BootstrapCompleted,
         ).await;
 
-        // Indicates we are out of the bootstrapping phase
-        self.detached.bootstrapping = false;
 
         // Remove the bootstrap action from our table actions
         warn!("bootstrap_completed remove bootstrap action_id:{:?}",&action_id);
@@ -449,7 +484,7 @@ impl DhtHandler
         let mid_generator = self.detached.aid_generator.generate();
         let action_id = mid_generator.action_id();
 
-        if self.detached.bootstrapping {
+        if self.status != DhtStatus::Completed {
             // Queue it up if we are currently bootstrapping
             self.detached
                 .future_actions
