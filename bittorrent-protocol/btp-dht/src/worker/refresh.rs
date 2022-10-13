@@ -89,7 +89,7 @@ impl TableRefresh {
             .map(|node| *node.handle())
             .collect::<Vec<_>>();
 
-        log::warn!("Refresh nodes num:{:?}",nodes.len());
+        log::trace!("Refresh nodes num:{:?}",nodes.len());
 
         for node in nodes
         {
