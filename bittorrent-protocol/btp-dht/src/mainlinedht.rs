@@ -12,7 +12,7 @@ use btp_util::bt::InfoHash;
 use btp_util::net;
 
 use crate::router::Router;
-use crate::worker::{DhtEvent, OneshotTask, ShutdownCause, start_dht};
+use crate::worker::{DhtEvent, DhtValues, OneshotTask, ShutdownCause, start_dht};
 
 /// Maintains a Distributed Hash (Routing) Table.
 pub struct MainlineDht {
@@ -84,10 +84,10 @@ impl MainlineDht {
         recv.recv().await.unwrap_or(false)
     }
 
-    pub fn getStatus(&self) -> Option<mpsc::UnboundedReceiver<DhtEvent>> {
-        let (send, recv) = mpsc::unbounded_channel();
+    pub async fn getValues(&self) -> Option<DhtValues> {
+        let (send, mut recv) = mpsc::unbounded_channel();
 
-        if self.send.send(OneshotTask::RegisterSender(send)).is_err() {
+        if self.send.send(OneshotTask::GetDhtValues(send)).is_err() {
             warn!(
                 "bittorrent-protocol_dht: MainlineDht failed to send a register sender message..."
             );
@@ -97,7 +97,7 @@ impl MainlineDht {
             return None;
         }
 
-        Some(recv)
+        recv.recv().await
     }
 
     /// Start the MainlineDht with the given DhtBuilder and Handshaker.
