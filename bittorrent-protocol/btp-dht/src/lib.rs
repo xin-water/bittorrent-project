@@ -25,8 +25,8 @@ extern crate error_chain;
 #[macro_use]
 pub mod bencode;
 
-mod builder;
-pub use builder::{DhtBuilder, MainlineDht};
+mod mainlinedht;
+pub use mainlinedht::{DhtBuilder, MainlineDht};
 
 mod error;
 

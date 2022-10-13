@@ -70,6 +70,36 @@ impl MainlineDht {
         Some(recv)
     }
 
+    pub async fn bootstrapped(&self) -> bool{
+
+        let (send, mut recv) = mpsc::unbounded_channel();
+
+        if self.send.send(OneshotTask::GetBootstrapStatus(send)).is_err() {
+            warn!(
+                "bittorrent-protocol_dht: MainlineDht failed to send a get bootstrapped sender message..."
+            );
+            return false;
+        }
+
+        recv.recv().await.unwrap_or(false)
+    }
+
+    pub fn getStatus(&self) -> Option<mpsc::UnboundedReceiver<DhtEvent>> {
+        let (send, recv) = mpsc::unbounded_channel();
+
+        if self.send.send(OneshotTask::RegisterSender(send)).is_err() {
+            warn!(
+                "bittorrent-protocol_dht: MainlineDht failed to send a register sender message..."
+            );
+            // TODO: Should we push a Shutdown event through the sender here? We would need
+            // to know the cause or create a new cause for this specific scenario since the
+            // client could have been lazy and wasnt monitoring this until after it shutdown!
+            return None;
+        }
+
+        Some(recv)
+    }
+
     /// Start the MainlineDht with the given DhtBuilder and Handshaker.
     pub fn builder() -> DhtBuilder {
         DhtBuilder::new()
