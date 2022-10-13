@@ -46,7 +46,7 @@ use crate::transaction::{AIDGenerator, ActionID, TransactionID};
 use crate::worker::bootstrap::{BootstrapStatus, TableBootstrap};
 use crate::worker::lookup::{LookupStatus, TableLookup};
 use crate::worker::refresh::{RefreshStatus, TableRefresh};
-use crate::worker::{DhtEvent, OneshotTask, ScheduledTask, ShutdownCause};
+use crate::worker::{DhtEvent, DhtStatus, DhtValues, OneshotTask, ScheduledTask, ShutdownCause};
 use crate::worker::socket::{DhtSocket, IpVersion};
 use crate::worker::timer::Timer;
 
@@ -74,14 +74,6 @@ enum PostBootstrapAction {
     Lookup(InfoHash, bool, Option<mpsc::Sender<SocketAddr>>),
     /// Future refresh action.
     Refresh(TableRefresh, TransactionID),
-}
-
-#[derive(Eq, PartialEq)]
-pub enum DhtStatus{
-    Init,
-    BootStrapIng,
-    Fail,
-    Completed,
 }
 
 /// Storage for our EventLoop to invoke actions upon.
@@ -236,14 +228,17 @@ impl DhtHandler
             OneshotTask::RegisterSender(send) => {
                 self.handle_register_sender(send);
             }
+            OneshotTask::GetBootstrapStatus(tx) => {
+                self.handle_get_bootstarpped(tx).await;
+            }
+            OneshotTask::GetDhtValues(tx) => {
+                self.handle_get_dht_values(tx);
+            }
             OneshotTask::StartBootstrap(routers, nodes) => {
                 self.handle_start_bootstrap(routers, nodes).await;
             }
             OneshotTask::StartLookup(info_hash, should_announce,tx) => {
                 self.handle_start_lookup(info_hash, should_announce, tx).await;
-            }
-            OneshotTask::GetBootstrapStatus(tx) => {
-                self.handle_get_bootstarpped(tx).await;
             }
         }
     }
@@ -316,6 +311,9 @@ impl DhtHandler
         self.shutdown();
     }
 
+    fn handle_register_sender(&mut self, sender: mpsc::UnboundedSender<DhtEvent>) {
+        self.detached.event_notifiers.push(sender);
+    }
 
     async fn handle_get_bootstarpped(&mut self,tx: mpsc::UnboundedSender<bool>) {
 
@@ -326,11 +324,16 @@ impl DhtHandler
         }
     }
 
-    fn handle_register_sender(&mut self, sender: mpsc::UnboundedSender<DhtEvent>) {
-        self.detached.event_notifiers.push(sender);
+    fn handle_get_dht_values(&mut self,tx: mpsc::UnboundedSender<DhtValues>) {
+
+        tx.send(DhtValues {
+            dht_status: self.status,
+            good_node_count: self.detached.routing_table.num_good_nodes(),
+            questionable_node_count: self.detached.routing_table.num_questionable_nodes(),
+            bucket_count: self.detached.routing_table.buckets_iter().count(),
+        })
+            .expect("DhtValues send fail!")
     }
-
-
     async fn handle_start_bootstrap(
         &mut self,
         routers: Vec<Router>,

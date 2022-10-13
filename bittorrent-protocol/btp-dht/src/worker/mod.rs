@@ -26,14 +26,16 @@ pub mod timer;
 pub enum OneshotTask {
     /// Register a sender to send DhtEvents to.
     RegisterSender(mpsc::UnboundedSender<DhtEvent>),
+    /// get dht bootstrapStatus
+    GetBootstrapStatus(mpsc::UnboundedSender<bool>),
+    /// get dht node value
+    GetDhtValues(mpsc::UnboundedSender<DhtValues>),
     /// Load a new bootstrap operation into worker storage.
     StartBootstrap(Vec<Router>, Vec<SocketAddr>),
     /// Start a lookup for the given InfoHash.
     StartLookup(InfoHash, bool ,Option<mpsc::Sender<SocketAddr>>),
     /// Gracefully shutdown the DHT and associated workers.
     Shutdown(ShutdownCause),
-    ///
-    GetBootstrapStatus(mpsc::UnboundedSender<bool>),
 }
 
 /// Task that our DHT will execute some time later.
@@ -71,6 +73,23 @@ pub enum ShutdownCause {
     ClientInitiated,
     /// Cause of shutdown is not specified.
     Unspecified,
+}
+
+
+#[derive(Copy, Clone, Debug)]
+pub struct DhtValues {
+    pub dht_status: DhtStatus,
+    pub good_node_count: usize,
+    pub questionable_node_count: usize,
+    pub bucket_count: usize,
+}
+
+#[derive(Eq, PartialEq, Copy, Clone,Debug)]
+pub enum DhtStatus{
+    Init,
+    BootStrapIng,
+    Fail,
+    Completed,
 }
 
 //传递对象不好，应该拆分后传成员的，但我太懒了，后面有需要再改。

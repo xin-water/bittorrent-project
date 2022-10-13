@@ -47,6 +47,25 @@ impl RoutingTable {
         ClosestNodes::new(&self.buckets, self.node_id, node_id)
     }
 
+    /// Number of good nodes in the RoutingTable.
+    pub fn num_good_nodes(&self) -> usize {
+        self.closest_nodes(self.node_id())
+            .filter(|n| n.status() == NodeStatus::Good)
+            .count()
+    }
+
+    /// Number of questionable nodes in the RoutingTable.
+    pub fn num_questionable_nodes(&self) -> usize {
+        self.closest_nodes(self.node_id())
+            .filter(|n| n.status() == NodeStatus::Questionable)
+            .count()
+    }
+
+    /// Iterator over all buckets in the routing table.
+    pub fn buckets_iter(&self) -> impl Iterator<Item = &Bucket> + ExactSizeIterator {
+        self.buckets.iter()
+    }
+
     /// Iterator over all buckets in the routing table.
     pub fn buckets<'a>(&'a self) -> Buckets<'a> {
         Buckets::new(&self.buckets)
