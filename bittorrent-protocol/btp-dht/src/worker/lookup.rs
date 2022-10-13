@@ -485,7 +485,7 @@ impl TableLookup {
     {
         // Entering the endgame phase
         self.in_endgame = true;
-        warn!("start_endgame_round");
+        log::info!("start_endgame_round");
         // Try to start a global message timeout for the endgame
         let timeout = timer.schedule_in(ENDGAME_TIMEOUT_MS,ScheduledTask::CheckLookupEndGame(self.id_generator.generate()));
 

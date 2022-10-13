@@ -449,7 +449,7 @@ impl DhtHandler
 
 
         // Remove the bootstrap action from our table actions
-        warn!("bootstrap_completed remove bootstrap action_id:{:?}",&action_id);
+        log::info!("bootstrap_completed remove bootstrap action_id:{:?}",&action_id);
         self.table_actions.remove(&action_id);
 
 
@@ -1067,7 +1067,7 @@ async fn handle_check_lookup_endgame(
 {
     let (work_storage, table_actions) = (&mut self.detached, &mut self.table_actions);
 
-    warn!("remove lookup action_id:{:?}",&trans_id.action_id());
+    log::info!("remove lookup action_id:{:?}",&trans_id.action_id());
 
     let lookup_info = match table_actions.remove(&trans_id.action_id()) {
         Some(TableAction::Lookup(mut lookup)) => (
