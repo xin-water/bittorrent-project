@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::btree_map::BTreeMap;
 use std::str;
 
 use crate::access::bencode::{BMutAccess, BRefAccess, BencodeMutKind, BencodeRefKind};

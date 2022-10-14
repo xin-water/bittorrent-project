@@ -4,6 +4,7 @@ use crate::access::dict::BDictAccess;
 use crate::access::list::BListAccess;
 use crate::error::{BencodeConvertError, BencodeConvertErrorKind};
 
+// bencode 拆解和转换 行为封装增强
 /// Trait for extended casting of bencode objects and converting conversion errors into application specific errors.
 pub trait BConvertExt: BConvert {
     /// See BConvert::convert_bytes.
@@ -65,6 +66,7 @@ pub trait BConvertExt: BConvert {
     }
 }
 
+// bencode 拆解和转换 行为封装
 /// Trait for casting bencode objects and converting conversion errors into application specific errors.
 pub trait BConvert {
     type Error;

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::btree_map::BTreeMap;
 
 /// Trait for working with generic map data structures.
 pub trait BDictAccess<K, V> {
