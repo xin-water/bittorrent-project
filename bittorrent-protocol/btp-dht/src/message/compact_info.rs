@@ -1,7 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
-// use crate::bencode::{Bencode};
-use crate::bencode::Bencode;
+use btp_bencode::{BencodeMut, BencodeRef, BListAccess, BRefAccess};
 use btp_util::bt::{self, NodeId};
 use btp_util::error::{LengthError, LengthErrorKind, LengthResult};
 use btp_util::sha::ShaHash;
@@ -73,9 +72,9 @@ impl<'a> Iterator for CompactNodeInfoIter<'a> {
 
 // ----------------------------------------------------------------------------//
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct CompactValueInfo<'a> {
-    values: &'a [Bencode<'a>],
+    values: Vec<&'a [u8]>,
 }
 
 impl<'a> CompactValueInfo<'a> {
@@ -83,12 +82,12 @@ impl<'a> CompactValueInfo<'a> {
     ///
     /// It is VERY important that the values have been checked to contain only
     /// bencoded bytes and not other types as that will result in a panic.
-    pub fn new(values: &'a [Bencode<'a>]) -> LengthResult<CompactValueInfo<'a>> {
+    pub fn new(values: Vec<&'a[u8]>) -> LengthResult<CompactValueInfo<'a>> {
         for (index, node) in values.iter().enumerate() {
             // TODO: Do not unwrap here please
-            let compact_value = node.bytes().unwrap();
+            //let compact_value = node.bytes().unwrap();
 
-            if compact_value.len() != BYTES_PER_COMPACT_IP {
+            if node.len() != BYTES_PER_COMPACT_IP {
                 return Err(LengthError::with_index(
                     LengthErrorKind::LengthExpected,
                     BYTES_PER_COMPACT_IP,
@@ -100,8 +99,8 @@ impl<'a> CompactValueInfo<'a> {
         Ok(CompactValueInfo { values: values })
     }
 
-    pub fn values(&self) -> &'a [Bencode<'a>] {
-        self.values
+    pub fn values(&self) ->Vec<&'a[u8]> {
+        self.values.clone()
     }
 }
 
@@ -117,9 +116,9 @@ impl<'a> IntoIterator for CompactValueInfo<'a> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct CompactValueInfoIter<'a> {
-    values: &'a [Bencode<'a>],
+    values: Vec<&'a[u8]>,
     pos: usize,
 }
 
@@ -130,11 +129,11 @@ impl<'a> Iterator for CompactValueInfoIter<'a> {
         if self.pos == self.values.len() {
             None
         } else {
-            let compact_info = &self.values[self.pos];
+            let compact_info = &self.values.get(self.pos).unwrap();
 
             self.pos += 1;
 
-            Some(socket_v4_from_bytes_be(compact_info.bytes().unwrap()).unwrap())
+            Some(socket_v4_from_bytes_be(compact_info).unwrap())
         }
     }
 }
@@ -176,6 +175,7 @@ fn socket_v4_from_bytes_be(bytes: &[u8]) -> LengthResult<SocketAddrV4> {
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
+    use btp_bencode::BRefAccess;
 
     use crate::message::compact_info::{CompactNodeInfo, CompactValueInfo};
     use btp_util::bt::NodeId;
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn positive_compact_values_empty() {
         let bencode_values = Vec::new();
-        let compact_value = CompactValueInfo::new(&bencode_values[..]).unwrap();
+        let compact_value = CompactValueInfo::new(bencode_values).unwrap();
 
         let collected_info: Vec<SocketAddrV4> = compact_value.into_iter().collect();
 
@@ -252,8 +252,10 @@ mod tests {
     #[test]
     fn positive_compact_values_one() {
         let bytes = [127, 0, 0, 1, (6881 >> 8) as u8, (6881 & 0x00FF) as u8];
-        let bencode_values = dht_ben_list!(dht_ben_bytes!(&bytes));
-        let compact_value = CompactValueInfo::new(bencode_values.list().unwrap()).unwrap();
+        let mut addrs = Vec::new();
+        addrs.push(&bytes[..]);
+        //let bencode_values = ben_list!(ben_bytes!(&bytes));
+        let compact_value = CompactValueInfo::new(addrs).unwrap();
 
         let collected_info: Vec<SocketAddrV4> = compact_value.into_iter().collect();
         assert_eq!(collected_info.len(), 1);
@@ -268,8 +270,9 @@ mod tests {
     fn positive_compact_values_many() {
         let bytes_one = [127, 0, 0, 1, (6881 >> 8) as u8, (6881 & 0x00FF) as u8];
         let bytes_two = [10, 0, 0, 1, (6889 >> 8) as u8, (6889 & 0x00FF) as u8];
-        let bencode_values = dht_ben_list!(dht_ben_bytes!(&bytes_one), dht_ben_bytes!(&bytes_two));
-        let compact_value = CompactValueInfo::new(bencode_values.list().unwrap()).unwrap();
+        let bytes = [&bytes_one[..],&bytes_two[..]].to_vec();
+        //let bencode_values = ben_list!(ben_bytes!(&bytes_one), ben_bytes!(&bytes_two));
+        let compact_value = CompactValueInfo::new(bytes).unwrap();
 
         let collected_info: Vec<SocketAddrV4> = compact_value.into_iter().collect();
         assert_eq!(collected_info.len(), 2);
