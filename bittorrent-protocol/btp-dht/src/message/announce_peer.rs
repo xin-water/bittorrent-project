@@ -1,10 +1,9 @@
 // TODO: Remove this when announces are implemented
 #![allow(unused)]
 
-// use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use btp_util::bt::{InfoHash, NodeId};
 
-use crate::bencode::{Bencode, BencodeConvert, Dictionary};
+use btp_bencode::{BConvert, BDictAccess, BencodeRef, BRefAccess};
 use crate::error::DhtResult;
 use crate::message;
 use crate::message::acting::ActingResponse;
@@ -48,7 +47,7 @@ impl<'a> AnnouncePeerRequest<'a> {
     }
 
     pub fn from_parts(
-        rqst_root: &dyn Dictionary<'a, Bencode<'a>>,
+        rqst_root: &'a dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
     ) -> DhtResult<AnnouncePeerRequest<'a>> {
         let validate = RequestValidate::new(trans_id);
@@ -114,17 +113,17 @@ impl<'a> AnnouncePeerRequest<'a> {
             ConnectPort::Explicit(n) => (n, 0),
         };
 
-        (dht_ben_map! {
+        (ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::REQUEST_TYPE_KEY),
-            message::REQUEST_TYPE_KEY => dht_ben_bytes!(request::ANNOUNCE_PEER_TYPE_KEY),
-            request::REQUEST_ARGS_KEY => dht_ben_map!{
-                message::NODE_ID_KEY => dht_ben_bytes!(self.node_id.as_ref()),
-                IMPLIED_PORT_KEY => dht_ben_int!(implied_value),
-                message::INFO_HASH_KEY => dht_ben_bytes!(self.info_hash.as_ref()),
-                PORT_KEY => dht_ben_int!(displayed_port as i64),
-                message::TOKEN_KEY => dht_ben_bytes!(self.token)
+            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => ben_bytes!(message::REQUEST_TYPE_KEY),
+            message::REQUEST_TYPE_KEY => ben_bytes!(request::ANNOUNCE_PEER_TYPE_KEY),
+            request::REQUEST_ARGS_KEY => ben_map!{
+                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref()),
+                IMPLIED_PORT_KEY => ben_int!(implied_value),
+                message::INFO_HASH_KEY => ben_bytes!(self.info_hash.as_ref()),
+                PORT_KEY => ben_int!(displayed_port as i64),
+                message::TOKEN_KEY => ben_bytes!(self.token)
             }
         })
         .encode()

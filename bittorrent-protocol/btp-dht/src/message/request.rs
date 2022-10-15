@@ -1,7 +1,6 @@
-// use crate::bencode::{Bencode, BencodeConvert, Dictionary, BencodeConvertError};
+use btp_bencode::{BConvert, BDictAccess, BencodeConvertError, BencodeRef};
 use btp_util::bt::{InfoHash, NodeId};
 
-use crate::bencode::{Bencode, BencodeConvert, BencodeConvertError, Dictionary};
 use crate::error::{DhtError, DhtErrorKind, DhtResult};
 use crate::message;
 use crate::message::announce_peer::AnnouncePeerRequest;
@@ -56,7 +55,7 @@ impl<'a> RequestValidate<'a> {
     }
 }
 
-impl<'a> BencodeConvert for RequestValidate<'a> {
+impl<'a> BConvert for RequestValidate<'a> {
     type Error = DhtError;
 
     fn handle_error(&self, error: BencodeConvertError) -> DhtError {
@@ -77,7 +76,7 @@ pub enum RequestType<'a> {
 
 impl<'a> RequestType<'a> {
     pub fn from_parts(
-        root: &dyn Dictionary<'a, Bencode<'a>>,
+        root: &'a dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
         rqst_type: &str,
     ) -> DhtResult<RequestType<'a>> {
@@ -135,7 +134,7 @@ impl<'a> RequestType<'a> {
 ///
 /// Treat unsupported messages with either a target id key or info hash key as find node messages.
 fn forward_compatible_find_node<'a>(
-    rqst_root: &dyn Dictionary<'a, Bencode<'a>>,
+    rqst_root: &dyn BDictAccess<&[u8], BencodeRef<'a>>,
 ) -> Option<&'static str> {
     match (
         rqst_root.lookup(message::TARGET_ID_KEY.as_bytes()),

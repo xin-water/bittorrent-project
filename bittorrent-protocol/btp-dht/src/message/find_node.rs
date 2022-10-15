@@ -1,7 +1,6 @@
-// use crate::bencode::{Bencode, BencodeConvert, Dictionary};
+use btp_bencode::{BConvert, BDictAccess, BencodeRef};
 use btp_util::bt::NodeId;
 
-use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use crate::error::DhtResult;
 use crate::message;
 use crate::message::compact_info::CompactNodeInfo;
@@ -29,7 +28,7 @@ impl<'a> FindNodeRequest<'a> {
     /// The target_key argument is provided for cases where, due to forward compatibility,
     /// the target key we are interested in could fall under the target key or another key.
     pub fn from_parts(
-        rqst_root: &dyn Dictionary<'a, Bencode<'a>>,
+        rqst_root: &dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
         target_key: &str,
     ) -> DhtResult<FindNodeRequest<'a>> {
@@ -57,14 +56,14 @@ impl<'a> FindNodeRequest<'a> {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        (dht_ben_map! {
+        (ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::REQUEST_TYPE_KEY),
-            message::REQUEST_TYPE_KEY => dht_ben_bytes!(request::FIND_NODE_TYPE_KEY),
-            request::REQUEST_ARGS_KEY => dht_ben_map!{
-                message::NODE_ID_KEY => dht_ben_bytes!(self.node_id.as_ref()),
-                message::TARGET_ID_KEY => dht_ben_bytes!(self.target_id.as_ref())
+            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => ben_bytes!(message::REQUEST_TYPE_KEY),
+            message::REQUEST_TYPE_KEY => ben_bytes!(request::FIND_NODE_TYPE_KEY),
+            request::REQUEST_ARGS_KEY => ben_map!{
+                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref()),
+                message::TARGET_ID_KEY => ben_bytes!(self.target_id.as_ref())
             }
         })
         .encode()
@@ -95,7 +94,7 @@ impl<'a> FindNodeResponse<'a> {
     }
 
     pub fn from_parts(
-        rsp_root: &dyn Dictionary<'a, Bencode<'a>>,
+        rsp_root: &'a dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
     ) -> DhtResult<FindNodeResponse<'a>> {
         let validate = ResponseValidate::new(trans_id);
@@ -121,13 +120,13 @@ impl<'a> FindNodeResponse<'a> {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        (dht_ben_map! {
+        (ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::RESPONSE_TYPE_KEY),
-            message::RESPONSE_TYPE_KEY => dht_ben_map!{
-                message::NODE_ID_KEY => dht_ben_bytes!(self.node_id.as_ref()),
-                message::NODES_KEY => dht_ben_bytes!(self.nodes.nodes())
+            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
+            message::RESPONSE_TYPE_KEY => ben_map!{
+                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref()),
+                message::NODES_KEY => ben_bytes!(self.nodes.nodes())
             }
         })
         .encode()

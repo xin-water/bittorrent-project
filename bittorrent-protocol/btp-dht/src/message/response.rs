@@ -1,7 +1,6 @@
-// use crate::bencode::{Bencode, BencodeConvert, Dictionary, BencodeConvertError};
+use btp_bencode::{BConvert, BDictAccess, BencodeConvertError, BencodeRef, BListAccess, BRefAccess};
 use btp_util::bt::NodeId;
 
-use crate::bencode::{Bencode, BencodeConvert, BencodeConvertError, Dictionary};
 use crate::error::{DhtError, DhtErrorKind, DhtResult};
 use crate::message::acting::ActingResponse;
 use crate::message::announce_peer::AnnouncePeerResponse;
@@ -55,11 +54,12 @@ impl<'a> ResponseValidate<'a> {
 
     pub fn validate_values<'b>(
         &self,
-        values: &'b [Bencode<'a>],
+        values: &'b dyn BListAccess<BencodeRef<'b>>,
     ) -> DhtResult<CompactValueInfo<'b>> {
-        for bencode in values.iter() {
+        let mut peers = Vec::new();
+        for bencode in values.into_iter() {
             match bencode.bytes() {
-                Some(_) => (),
+                Some(peer) => peers.push(peer),
                 None => {
                     return Err(DhtError::from_kind(DhtErrorKind::InvalidResponse {
                         details: format!(
@@ -71,7 +71,7 @@ impl<'a> ResponseValidate<'a> {
             }
         }
 
-        CompactValueInfo::new(values).map_err(|_| {
+        CompactValueInfo::new(peers).map_err(|_| {
             DhtError::from_kind(DhtErrorKind::InvalidResponse {
                 details: format!(
                     "TID {:?} Found Values Structrue With Wrong Number Of Bytes",
@@ -82,7 +82,7 @@ impl<'a> ResponseValidate<'a> {
     }
 }
 
-impl<'a> BencodeConvert for ResponseValidate<'a> {
+impl<'a> BConvert for ResponseValidate<'a> {
     type Error = DhtError;
 
     fn handle_error(&self, error: BencodeConvertError) -> DhtError {
@@ -106,7 +106,7 @@ pub enum ExpectedResponse {
     None,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ResponseType<'a> {
     Ping(PingResponse<'a>),
     FindNode(FindNodeResponse<'a>),
@@ -120,7 +120,7 @@ pub enum ResponseType<'a> {
 
 impl<'a> ResponseType<'a> {
     pub fn from_parts(
-        root: &'a dyn Dictionary<'a, Bencode<'a>>,
+        root: &'a dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
         //rsp_type: ExpectedResponse,
     ) -> DhtResult<ResponseType<'a>> {

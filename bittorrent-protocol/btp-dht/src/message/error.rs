@@ -3,9 +3,7 @@
 
 use std::borrow::Cow;
 
-// use crate::bencode::{Bencode, BencodeConvert, Dictionary, BencodeConvertError};
-
-use crate::bencode::{Bencode, BencodeConvert, BencodeConvertError, Dictionary};
+use btp_bencode::{BConvert, BDictAccess, BencodeConvertError, BencodeRef, BListAccess};
 use crate::error::{DhtError, DhtErrorKind, DhtResult};
 use crate::message;
 
@@ -56,21 +54,25 @@ impl Into<u8> for ErrorCode {
 struct ErrorValidate;
 
 impl ErrorValidate {
-    fn extract_error_args<'a>(&self, args: &[Bencode<'a>]) -> DhtResult<(u8, &'a str)> {
+    fn extract_error_args<'a>(&self, args: &'a dyn BListAccess<BencodeRef<'a>>) -> DhtResult<(u8,&'a str)> {
         if args.len() != NUM_ERROR_ARGS {
             return Err(DhtError::from_kind(DhtErrorKind::InvalidResponse {
                 details: format!("Error Message Invalid Number Of Error Args: {}", args.len()),
             }));
         }
 
-        let code = self.convert_int(&args[0], &format!("{}[0]", ERROR_ARGS_KEY))?;
-        let message = self.convert_str(&args[1], &format!("{}[1]", ERROR_ARGS_KEY))?;
+        //let code = self.convert_int(&args[0], &format!("{}[0]", ERROR_ARGS_KEY))?;
+        //let message = self.convert_str(&args[1], &format!("{}[1]", ERROR_ARGS_KEY))?;
+        // 使用上面函数会出现不允许返回的情况，借用检查是真的烦，
+        // 特别是借用结构体，包含多个借用，在业务函数里 进行类型转换，计算、返回新借用对象的时候
+        let code = self.convert_int(args.get(0).unwrap(), &format!("{}[0]", ERROR_ARGS_KEY))?;
+        let message = self.convert_str(args.get(1).unwrap(), &format!("{}[1]", ERROR_ARGS_KEY))?;
 
         Ok((code as u8, message))
     }
 }
 
-impl BencodeConvert for ErrorValidate {
+impl BConvert for ErrorValidate {
     type Error = DhtError;
 
     fn handle_error(&self, error: BencodeConvertError) -> DhtError {
@@ -103,7 +105,7 @@ impl<'a> ErrorMessage<'a> {
     }
 
     pub fn from_parts(
-        root: &dyn Dictionary<'a, Bencode<'a>>,
+        root: &'a dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
     ) -> DhtResult<ErrorMessage<'a>> {
         let validate = ErrorValidate;
@@ -137,13 +139,13 @@ impl<'a> ErrorMessage<'a> {
     pub fn encode(&self) -> Vec<u8> {
         let error_code = Into::<u8>::into(self.code) as i64;
 
-        (dht_ben_map! {
+        (ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => dht_ben_bytes!(&self.trans_id),
-            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::ERROR_TYPE_KEY),
-            message::ERROR_TYPE_KEY => dht_ben_list!(
-                dht_ben_int!(error_code),
-                dht_ben_bytes!(self.message.as_bytes())
+            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id.as_ref()),
+            message::MESSAGE_TYPE_KEY => ben_bytes!(message::ERROR_TYPE_KEY),
+            message::ERROR_TYPE_KEY => ben_list!(
+                ben_int!(error_code),
+                ben_bytes!(self.message.as_bytes())
             )
         })
         .encode()

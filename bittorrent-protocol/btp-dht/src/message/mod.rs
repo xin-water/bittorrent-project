@@ -1,6 +1,5 @@
-// use crate::bencode::{Bencode, BencodeConvert, BencodeConvertError};
 
-use crate::bencode::{Bencode, BencodeConvert, BencodeConvertError};
+use btp_bencode::{BConvert, BencodeConvertError, BencodeRef};
 use crate::error::{DhtError, DhtErrorKind, DhtResult};
 use crate::message::error::ErrorMessage;
 use crate::message::request::RequestType;
@@ -44,7 +43,7 @@ const TOKEN_KEY: &'static str = "token";
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 struct MessageValidate;
 
-impl BencodeConvert for MessageValidate {
+impl BConvert for MessageValidate {
     type Error = DhtError;
 
     fn handle_error(&self, error: BencodeConvertError) -> DhtError {
@@ -62,7 +61,7 @@ pub enum MessageType<'a> {
 }
 
 impl<'a> MessageType<'a> {
-    pub fn new(message: &'a Bencode<'a>) -> DhtResult<MessageType<'a>>
+    pub fn new(message: &'a BencodeRef<'a>) -> DhtResult<MessageType<'a>>
     {
         let validate = MessageValidate;
         let msg_root = validate.convert_dict(message, ROOT_ID_KEY)?;

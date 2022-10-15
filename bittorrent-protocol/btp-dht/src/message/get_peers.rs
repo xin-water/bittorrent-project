@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
+use btp_bencode::{BConvert, BDictAccess, BencodeMut, BencodeRef, BMutAccess, inner::BCowConvert};
 
-// use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use btp_util::bt::{InfoHash, NodeId};
 
-use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use crate::error::{DhtError, DhtErrorKind, DhtResult};
 use crate::message;
 use crate::message::compact_info::{CompactNodeInfo, CompactValueInfo};
@@ -27,7 +26,7 @@ impl<'a> GetPeersRequest<'a> {
     }
 
     pub fn from_parts(
-        rqst_root: &dyn Dictionary<'a, Bencode<'a>>,
+        rqst_root: &dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
     ) -> DhtResult<GetPeersRequest<'a>> {
         let validate = RequestValidate::new(trans_id);
@@ -55,28 +54,28 @@ impl<'a> GetPeersRequest<'a> {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        (dht_ben_map! {
+        (ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::REQUEST_TYPE_KEY),
-            message::REQUEST_TYPE_KEY => dht_ben_bytes!(request::GET_PEERS_TYPE_KEY),
-            request::REQUEST_ARGS_KEY => dht_ben_map!{
-                message::NODE_ID_KEY => dht_ben_bytes!(self.node_id.as_ref()),
-                message::INFO_HASH_KEY => dht_ben_bytes!(self.info_hash.as_ref())
+            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => ben_bytes!(message::REQUEST_TYPE_KEY),
+            message::REQUEST_TYPE_KEY => ben_bytes!(request::GET_PEERS_TYPE_KEY),
+            request::REQUEST_ARGS_KEY => ben_map!{
+                message::NODE_ID_KEY => ben_bytes!(self.node_id.as_ref()),
+                message::INFO_HASH_KEY => ben_bytes!(self.info_hash.as_ref())
             }
         })
         .encode()
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CompactInfoType<'a> {
     Nodes(CompactNodeInfo<'a>),
     Values(CompactValueInfo<'a>),
     Both(CompactNodeInfo<'a>, CompactValueInfo<'a>),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct GetPeersResponse<'a> {
     trans_id: &'a [u8],
     node_id: NodeId,
@@ -102,7 +101,7 @@ impl<'a> GetPeersResponse<'a> {
     }
 
     pub fn from_parts(
-        rsp_root: &'a dyn Dictionary<'a, Bencode<'a>>,
+        rsp_root: &'a dyn BDictAccess<&[u8], BencodeRef<'a>>,
         trans_id: &'a [u8],
     ) -> DhtResult<GetPeersResponse<'a>> {
         let validate = ResponseValidate::new(trans_id);
@@ -156,47 +155,60 @@ impl<'a> GetPeersResponse<'a> {
     }
 
     pub fn info_type(&self) -> CompactInfoType<'a> {
-        self.info_type
+        self.info_type.clone()
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        let mut response_args = BTreeMap::new();
+        let mut ben_dict= BencodeMut::new_dict();
+        let response_args = ben_dict.dict_mut().unwrap();
 
         response_args.insert(
-            message::NODE_ID_KEY.as_bytes(),
-            dht_ben_bytes!(self.node_id.as_ref()),
+            message::NODE_ID_KEY.convert(),
+            ben_bytes!(self.node_id.as_ref()),
         );
         match self.token {
             Some(token) => {
-                response_args.insert(message::TOKEN_KEY.as_bytes(), dht_ben_bytes!(token));
+                response_args.insert(message::TOKEN_KEY.convert(), ben_bytes!(token));
             }
             None => (),
         };
 
-        match self.info_type {
+        match self.info_type.clone() {
             CompactInfoType::Nodes(nodes) => {
-                response_args.insert(message::NODES_KEY.as_bytes(), dht_ben_bytes!(nodes.nodes()));
+                response_args.insert(message::NODES_KEY.convert(), ben_bytes!(nodes.nodes()));
             }
             CompactInfoType::Values(values) => {
+                let mut ben_list= BencodeMut::new_list();
+                let ben_list_ref = ben_list.list_mut().unwrap();
+
+                for v in values.values() {
+                    ben_list_ref.push(ben_bytes!(v));
+                }
                 response_args.insert(
-                    message::VALUES_KEY.as_bytes(),
-                    Bencode::List(values.values().to_vec()),
+                    message::VALUES_KEY.convert(),
+                    ben_list,
                 );
             }
             CompactInfoType::Both(nodes, values) => {
-                response_args.insert(message::NODES_KEY.as_bytes(), dht_ben_bytes!(nodes.nodes()));
+                response_args.insert(message::NODES_KEY.convert(), ben_bytes!(nodes.nodes()));
+
+                let mut ben_list= BencodeMut::new_list();
+                let ben_list_ref = ben_list.list_mut().unwrap();
+                for v in values.values().to_vec() {
+                    ben_list_ref.push(ben_bytes!(v));
+                }
                 response_args.insert(
-                    message::VALUES_KEY.as_bytes(),
-                    Bencode::List(values.values().to_vec()),
+                    message::VALUES_KEY.convert(),
+                    ben_list,
                 );
             }
         };
 
-        (dht_ben_map! {
+        (ben_map! {
             //message::CLIENT_TYPE_KEY => ben_bytes!(dht::CLIENT_IDENTIFICATION),
-            message::TRANSACTION_ID_KEY => dht_ben_bytes!(self.trans_id),
-            message::MESSAGE_TYPE_KEY => dht_ben_bytes!(message::RESPONSE_TYPE_KEY),
-            response::RESPONSE_ARGS_KEY => Bencode::Dict(response_args)
+            message::TRANSACTION_ID_KEY => ben_bytes!(self.trans_id),
+            message::MESSAGE_TYPE_KEY => ben_bytes!(message::RESPONSE_TYPE_KEY),
+            response::RESPONSE_ARGS_KEY => ben_dict
         })
         .encode()
     }

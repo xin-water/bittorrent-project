@@ -4,7 +4,6 @@
 // use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use btp_util::bt::NodeId;
 
-use crate::bencode::{Bencode, BencodeConvert, Dictionary};
 use crate::error::DhtResult;
 use crate::message;
 use crate::message::acting::{ActingRequest, ActingResponse};
