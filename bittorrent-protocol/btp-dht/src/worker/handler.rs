@@ -10,10 +10,7 @@ use futures::{
     Stream,
     StreamExt,
 };
-use tokio::{
-    select,
-    sync::{mpsc, oneshot}
-};
+use tokio::{select, sync::{mpsc, oneshot}, task};
 use tokio::sync::mpsc::Sender;
 use btp_bencode::{BDecodeOpt, BencodeRef};
 
@@ -184,6 +181,10 @@ impl DhtHandler
                 // return `None`.
                 let token = token.unwrap();
                 log::trace!("timeout_rx: {:?}",&token);
+                // 开辟协程处理来处理业务，但涉及借用跨越生命周期问题，
+                // 解决方法是：修改方法为函数，将成员组合成小对象，设置小对象为Arc，加锁
+                // 感觉性能够用了，以后有需要再修改吧，我太懒了。
+                //task::spawn(self.handle_timeout(token));
                 self.handle_timeout(token).await
             }
         }
