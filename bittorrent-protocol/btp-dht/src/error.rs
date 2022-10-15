@@ -1,10 +1,7 @@
 use std::io;
 use error_chain::error_chain;
-
-// use crate::bencode::BencodeConvertError;
-
 use super::message::error::ErrorMessage;
-use crate::bencode::BencodeConvertError;
+use btp_bencode::BencodeConvertError;
 error_chain! {
     types {
         DhtError, DhtErrorKind, DhtResultExt, DhtResult;

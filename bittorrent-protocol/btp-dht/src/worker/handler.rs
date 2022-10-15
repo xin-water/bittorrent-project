@@ -15,7 +15,7 @@ use tokio::{
     sync::{mpsc, oneshot}
 };
 use tokio::sync::mpsc::Sender;
-use crate::bencode::Bencode;
+use btp_bencode::{BDecodeOpt, BencodeRef};
 
 use btp_util::bt::InfoHash;
 use btp_util::convert;
@@ -254,7 +254,7 @@ impl DhtHandler
         // 消息编码
         // 不能抽为函数、会触发返回借用，message包含了 &bencode，
         // 不能抽为方法、会与下面发生可变借用冲突，借用检查算法会误杀。，
-        let bencode = if let Ok(b) = Bencode::decode(buffer){
+        let bencode = if let Ok(b) = BencodeRef::decode(buffer,BDecodeOpt::default()){
             b
         } else {
             warn!("bittorrent-protocol_dht: Received invalid bencode data...");
@@ -648,7 +648,7 @@ impl DhtHandler
                 for chunk_index in 0..(contact_info_bytes.len() / 6) {
                     let (start, end) = (chunk_index * 6, chunk_index * 6 + 6);
 
-                    contact_info_bencode.push(dht_ben_bytes!(&contact_info_bytes[start..end]));
+                    contact_info_bencode.push(&contact_info_bytes[start..end]);
                 }
 
                 // Grab the closest nodes
@@ -668,7 +668,7 @@ impl DhtHandler
                 let comapct_info_type = if !contact_info_bencode.is_empty() {
                     CompactInfoType::Both(
                         CompactNodeInfo::new(&closest_nodes_bytes).unwrap(),
-                        CompactValueInfo::new(&contact_info_bencode).unwrap(),
+                        CompactValueInfo::new(contact_info_bencode).unwrap(),
                     )
                 } else {
                     CompactInfoType::Nodes(CompactNodeInfo::new(&closest_nodes_bytes).unwrap())
