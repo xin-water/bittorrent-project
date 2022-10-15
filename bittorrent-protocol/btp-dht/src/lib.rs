@@ -22,9 +22,6 @@ extern crate error_chain;
 #[macro_use]
 extern crate btp_bencode;
 
-// #[macro_use]
-// pub mod bencode;
-
 mod mainlinedht;
 pub use mainlinedht::{DhtBuilder, MainlineDht};
 
