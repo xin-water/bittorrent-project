@@ -118,7 +118,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Warn),
         )
         .unwrap();
 
