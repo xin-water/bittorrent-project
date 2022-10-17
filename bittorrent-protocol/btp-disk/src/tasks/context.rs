@@ -13,7 +13,7 @@ pub struct DiskManagerContext<F> {
     //out: Sender<ODiskMessage>,
     fs: Arc<F>,
 }
-
+#[derive(Clone)]
 pub struct MetainfoState {
     file: Metainfo,
     state: PieceCheckerState,
@@ -59,7 +59,7 @@ impl<F> DiskManagerContext<F> {
         hash_not_exists
     }
 
-    pub fn update_torrent<C>(&self, hash: InfoHash, call: C) -> bool
+    pub fn update_torrent<C>(&self, hash: InfoHash, call: C) -> Result<PieceCheckerState,()>
     where
         C: FnOnce(&Metainfo, &mut PieceCheckerState),
     {
@@ -76,9 +76,9 @@ impl<F> DiskManagerContext<F> {
 
                 call(&deref_state.file, &mut deref_state.state);
 
-                true
+                Ok(deref_state.state.clone())
             }
-            None => false,
+            None => Err(()),
         }
     }
 
