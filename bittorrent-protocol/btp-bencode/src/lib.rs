@@ -91,7 +91,6 @@ macro_rules!  ben_map {
         }
     }
 }
-#[macro_export]
 macro_rules!  ben_map_self {
 ( $($key:expr => $val:expr),* ) => {
         {
