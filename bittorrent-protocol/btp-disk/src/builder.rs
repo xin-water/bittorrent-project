@@ -42,7 +42,7 @@ impl DiskManagerBuilder {
     }
 
     /// Build a `DiskManager` with the given `FileSystem`.
-    pub fn build<F>(self, fs: F) -> DiskManager<F>
+    pub fn build<F>(self, fs: F) -> DiskManager
     where
         F: FileSystem + Send + Sync + 'static,
     {

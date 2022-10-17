@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc};
 
-use std::sync::mpsc::{Receiver};
 use threadpool::ThreadPool;
 
 use std::pin::Pin;
@@ -11,34 +10,33 @@ use futures::{
     Future, FutureExt, Sink, SinkExt, Stream, StreamExt, TryFuture, TryFutureExt, TryStream,
     TryStreamExt,
 };
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::SendError;
 use crate::tasks;
 use crate::tasks::context::DiskManagerContext;
 use crate::{DiskManagerBuilder, FileSystem, IDiskMessage, ODiskMessage};
+use crate::tasks::start_disk_task;
 
 /// `DiskManager` object which handles the storage of `Blocks` to the `FileSystem`.
-pub struct DiskManager<F> {
-    sink: DiskManagerSink<F>,
+pub struct DiskManager {
+    sink: DiskManagerSink,
     stream: DiskManagerStream,
 }
 
-impl<F> DiskManager<F> {
+impl DiskManager {
     /// Create a `DiskManager` from the given `DiskManagerBuilder`.
-    pub fn from_builder(mut builder: DiskManagerBuilder, fs: F) -> DiskManager<F> {
+    pub fn from_builder<F>(mut builder: DiskManagerBuilder, fs: F) -> DiskManager
+    where F:std::marker::Sync + std::marker::Send + 'static,
+          F:FileSystem
+    {
+
         let sink_capacity = builder.sink_buffer_capacity();
         let stream_capacity = builder.stream_buffer_capacity();
-        let cur_sink_capacity = Arc::new(AtomicUsize::new(0));
 
-        //let (out_send, out_recv) = tokio::sync::mpsc::channel(stream_capacity);
-        let (out_send, out_recv) = std::sync::mpsc::channel();
+        let (tx,rx) = start_disk_task(sink_capacity,stream_capacity,fs);
 
-        let context = DiskManagerContext::new(out_send, fs);
-
-        let sink = DiskManagerSink::new(
-            context,
-            sink_capacity,
-            cur_sink_capacity.clone(),
-        );
-        let stream = DiskManagerStream::new(out_recv, cur_sink_capacity);
+        let sink = DiskManagerSink::new(tx);
+        let stream = DiskManagerStream::new(rx);
 
         DiskManager {
             sink: sink,
@@ -46,10 +44,22 @@ impl<F> DiskManager<F> {
         }
     }
 
+    pub async fn send(&mut self, msg: IDiskMessage) -> Result<(), SendError<IDiskMessage>> {
+        self.sink.tx.send(msg).await
+    }
+
+    pub async fn recv(&mut self) -> Option<ODiskMessage> {
+        self.stream.recv.recv().await
+    }
+
+    pub fn build() -> DiskManagerBuilder {
+        DiskManagerBuilder::new()
+    }
+
     /// Break the `DiskManager` into a sink and stream.
     ///
     /// The returned sink implements `Clone`.
-    pub fn into_parts(self) -> (DiskManagerSink<F>, DiskManagerStream) {
+    pub fn into_parts(self) -> (DiskManagerSink, DiskManagerStream) {
         (self.sink, self.stream)
     }
 }
@@ -57,118 +67,51 @@ impl<F> DiskManager<F> {
 //----------------------------------------------------------------------------//
 
 /// `DiskManagerSink` which is the sink portion of a `DiskManager`.
-pub struct DiskManagerSink<F> {
-    context: DiskManagerContext<F>,
-    max_capacity: usize,
-    cur_capacity: Arc<AtomicUsize>,
+pub struct DiskManagerSink {
+   tx: mpsc::Sender<IDiskMessage>
 }
 
-impl<F> Clone for DiskManagerSink<F> {
-    fn clone(&self) -> DiskManagerSink<F> {
+impl Clone for DiskManagerSink {
+    fn clone(&self) -> DiskManagerSink {
         DiskManagerSink {
-            context: self.context.clone(),
-            max_capacity: self.max_capacity,
-            cur_capacity: self.cur_capacity.clone(),
+            tx: self.tx.clone(),
         }
     }
 }
 
-impl<F> DiskManagerSink<F> {
+impl  DiskManagerSink {
     fn new(
-        context: DiskManagerContext<F>,
-        max_capacity: usize,
-        cur_capacity: Arc<AtomicUsize>,
-    ) -> DiskManagerSink<F> {
+      tx: mpsc::Sender<IDiskMessage>
+    ) -> DiskManagerSink {
         DiskManagerSink {
-            context: context,
-            max_capacity: max_capacity,
-            cur_capacity: cur_capacity,
+          tx
         }
     }
 
-    fn try_submit_work(&self) -> bool {
-        let cur_capacity = self.cur_capacity.fetch_add(1, Ordering::SeqCst);
 
-        if cur_capacity < self.max_capacity {
-            true
-        } else {
-            self.cur_capacity.fetch_sub(1, Ordering::SeqCst);
-
-            false
-        }
+    pub async fn send(&mut self, msg: IDiskMessage) -> Result<(), SendError<IDiskMessage>> {
+        self.tx.send(msg).await
     }
 }
 
 
-impl<F> Sink<IDiskMessage> for DiskManagerSink<F>
-where
-    F: FileSystem + Send + Sync + 'static,
-{
-    type Error = ();
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: IDiskMessage) -> Result<(), Self::Error> {
-
-        if self.try_submit_work() {
-            debug!("DiskManagerSink Submitted Work On First Attempt");
-            tasks::execute_on_pool(item, self.context.clone());
-            return Ok(());
-        }else {
-            debug!("DiskManagerSink Submitted Work fail");
-            Err(())
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // unimplemented!()
-        Poll::Ready(Ok(()))
-    }
-}
 
 //----------------------------------------------------------------------------//
 
 /// `DiskManagerStream` which is the stream portion of a `DiskManager`.
 pub struct DiskManagerStream {
-    recv: Receiver<ODiskMessage>,
-    cur_capacity: Arc<AtomicUsize>,
+    recv: mpsc::Receiver<ODiskMessage>,
 }
 
 impl DiskManagerStream {
-    fn new(recv: Receiver<ODiskMessage>, cur_capacity: Arc<AtomicUsize>) -> DiskManagerStream {
+    fn new(recv: mpsc::Receiver<ODiskMessage>) -> DiskManagerStream {
         DiskManagerStream {
-            recv: recv,
-            cur_capacity: cur_capacity,
+            recv: recv
         }
     }
 
-    fn complete_work(&self) {
-        self.cur_capacity.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-impl Stream for DiskManagerStream {
-    type Item = ODiskMessage;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        debug!("Polling DiskManagerStream For ODiskMessage");
-
-        match self.recv.recv() {
-            res @ Ok(ODiskMessage::TorrentAdded(_))
-            | res @ Ok(ODiskMessage::TorrentRemoved(_))
-            | res @ Ok(ODiskMessage::TorrentSynced(_))
-            | res @ Ok(ODiskMessage::BlockLoaded(_))
-            | res @ Ok(ODiskMessage::BlockProcessed(_)) => {
-                self.complete_work();
-                Poll::Ready(Some(res.unwrap()))
-            }
-            other => Poll::Ready(Some(other.unwrap())),
-        }
+    pub async fn recv(&mut self) -> Option<ODiskMessage> {
+        self.recv.recv().await
     }
 }
