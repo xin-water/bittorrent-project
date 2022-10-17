@@ -92,7 +92,7 @@ where
     info!("PieceChecker init_state complete ");
 
     // In case we are resuming a download, we need to send the diff for the newly added torrent
-    send_piece_diff(&mut init_state, info_hash, blocking_sender.clone(), true);
+    send_piece_diff(&mut init_state, info_hash, blocking_sender.clone(), true).await;
 
     if context.insert_torrent(file, init_state) {
         blocking_sender
@@ -147,7 +147,7 @@ where
         }
     });
 
-    if found_hash {
+    if let Ok(state) = found_hash {
         //Ok(sync_result?)
         out_message
             .send(ODiskMessage::TorrentSynced(hash))
@@ -179,7 +179,7 @@ where
         access_result = piece_accessor.read_piece(&mut *block, &metadata)
     });
 
-    if found_hash {
+    if let Ok(state) = found_hash {
         //Ok(access_result?)
         out_message
             .send(ODiskMessage::BlockLoaded(block))
@@ -229,21 +229,18 @@ where
             .calculate_diff()
         });
 
-        send_piece_diff(
-            checker_state,
-            metainfo_file.info().info_hash(),
-            out_message.clone(),
-            false,
-        );
-
         info!(
             "Processsing Block, Released Torrent Lock For {:?}",
             metainfo_file.info().info_hash()
         );
     });
 
-    if found_hash {
+    if let Ok(mut stat) = found_hash {
+        // task::spawn(
+        //     send_piece_diff(*checker_state, metainfo_file.info().info_hash(), out_message.clone(), false)
+        // );
         //Ok(block_result?)
+        send_piece_diff(&mut stat, info_hash, out_message.clone(), false).await;
         out_message
             .send(ODiskMessage::BlockProcessed(block))
             .await
@@ -258,23 +255,24 @@ where
     }
 }
 
-fn send_piece_diff(
+async fn send_piece_diff(
     checker_state: &mut PieceCheckerState,
     hash: InfoHash,
     blocking_sender: Sender<ODiskMessage>,
     ignore_bad: bool,
 ) {
-    checker_state.run_with_diff(move |piece_state| {
-        let opt_out_msg = match (piece_state, ignore_bad) {
-            (PieceState::Good(index), _) => Some(ODiskMessage::FoundGoodPiece(hash, index)),
-            (PieceState::Bad(index), false) => Some(ODiskMessage::FoundBadPiece(hash, index)),
-            (PieceState::Bad(_), true) => None,
-        };
+    let index_vec= checker_state.run_with_diff(move |piece_state|{
+        match (piece_state, ignore_bad) {
+            (PieceState::Good(index), _) =>true ,
+            (PieceState::Bad(index), false) => true,
+            (PieceState::Bad(_), true) => false,
+        }
+    });
 
-        // if let Some(out_msg) = opt_out_msg {
-        //     blocking_sender
-        //         .send(out_msg)
-        //         .expect("bittorrent-protocol_disk: Failed To Flush Piece State Message");
-        // }
-    })
+    for index in index_vec {
+        blocking_sender
+            .send(ODiskMessage::FoundGoodPiece(hash, index))
+            .await
+            .expect("bittorrent-protocol_disk: Failed To Flush Piece State Message");
+    }
 }
