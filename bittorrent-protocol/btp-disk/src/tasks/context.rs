@@ -10,7 +10,7 @@ use btp_util::bt::InfoHash;
 
 pub struct DiskManagerContext<F> {
     torrents: Arc<RwLock<HashMap<InfoHash, Mutex<MetainfoState>>>>,
-    out: Sender<ODiskMessage>,
+    //out: Sender<ODiskMessage>,
     fs: Arc<F>,
 }
 
@@ -29,17 +29,16 @@ impl MetainfoState {
 }
 
 impl<F> DiskManagerContext<F> {
-    pub fn new(out: Sender<ODiskMessage>, fs: F) -> DiskManagerContext<F> {
+    pub fn new(fs: F) -> DiskManagerContext<F> {
         DiskManagerContext {
             torrents: Arc::new(RwLock::new(HashMap::new())),
-            out: out,
             fs: Arc::new(fs),
         }
     }
 
-    pub fn blocking_sender(&self) -> Sender<ODiskMessage> {
-        self.out.clone()
-    }
+    // pub fn blocking_sender(&self) -> Sender<ODiskMessage> {
+    //     self.out.clone()
+    // }
 
     pub fn filesystem(&self) -> &F {
         &self.fs
@@ -96,7 +95,6 @@ impl<F> Clone for DiskManagerContext<F> {
     fn clone(&self) -> DiskManagerContext<F> {
         DiskManagerContext {
             torrents: self.torrents.clone(),
-            out: self.out.clone(),
             fs: self.fs.clone(),
         }
     }
