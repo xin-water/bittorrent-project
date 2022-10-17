@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 btp-util        = { version="0.1.1", path = "../btp-util" }
-btp-bencode     = { version="0.1.0", path = "../btp-bencode" }
+btp-bencode     = { version="0.1.1", path = "../btp-bencode" }
 
 num             = "0.1.0"
 rust-crypto     = "0.2.0"
