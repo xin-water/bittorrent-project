@@ -173,6 +173,7 @@ fn last_piece_size(info_dict: &Info) -> usize {
 // ----------------------------------------------------------------------------//
 
 /// Stores state for the PieceChecker between invocations.
+#[derive(Clone)]
 pub struct PieceCheckerState {
     new_states: Vec<PieceState>,
     old_states: HashSet<PieceState>,
@@ -187,6 +188,15 @@ pub enum PieceState {
     Good(u64),
     /// Piece was discovered as bad.
     Bad(u64),
+}
+
+impl PieceState{
+    pub(crate) fn get_index(&self)->u64{
+        match self{
+         &PieceState::Good(index)=>index,
+         &PieceState::Bad(index)=>index,
+        }
+    }
 }
 
 impl PieceCheckerState {
@@ -211,16 +221,21 @@ impl PieceCheckerState {
 
     /// Run the given closures against NewGood and NewBad messages. Each of the messages will
     /// then either be dropped (NewBad) or converted to OldGood (NewGood).
-    pub fn run_with_diff<F>(&mut self, mut callback: F)
+    pub fn run_with_diff<F>(&mut self, mut callback: F)->Vec<u64>
     where
-        F: Fn(PieceState),
+        F: Fn(PieceState)-> bool,
     {
+         let mut result =Vec::new();
         for piece_state in self.new_states.drain(..) {
-            callback(piece_state.clone());
+
+            if callback(piece_state.clone()){
+                result.push(piece_state.get_index())
+            }
 
             self.old_states.insert(piece_state);
         }
         info!("run_with_diff complete");
+        result
     }
 
     /// Pass any pieces that have not been identified as OldGood into the callback which determines
