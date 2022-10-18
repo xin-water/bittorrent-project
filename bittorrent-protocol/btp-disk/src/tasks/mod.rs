@@ -52,8 +52,6 @@ impl<F: FileSystem> TaskHandler<F>{
 
         while let Some(msg) = self.in_message.recv().await  {
 
-            println!(" 收到消息：{:?}",&msg);
-
             match msg {
                 IDiskMessage::AddTorrent(metainfo) => {
                     execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()).await
