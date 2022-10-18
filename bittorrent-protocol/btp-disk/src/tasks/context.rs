@@ -8,6 +8,9 @@ use crate::ODiskMessage;
 use btp_metainfo::Metainfo;
 use btp_util::bt::InfoHash;
 
+// 包含文件操作对象
+// 种子上下文集合 本质是一个hashmap
+
 // 锁内部的对象是不能为异步的，
 // await的时候会一直持有锁，导致其他协程拿不到锁，
 // 线程直接卡死，异步没了意义
@@ -32,9 +35,7 @@ impl MetainfoState {
     }
 }
 
-// 包含文件操作对象
-// 种子上下文集合 本质是一个hashmap  k为种子info信息，v为片状态检查器
-//   由于要协程并发，所以双重锁。
+
 impl<F> DiskManagerContext<F> {
     pub fn new(fs: F) -> DiskManagerContext<F> {
         DiskManagerContext {

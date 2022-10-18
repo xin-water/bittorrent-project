@@ -37,7 +37,7 @@ where
             //根据info字典初始化文件块，放到等待队列中，块与片一样大
             piece_checker_make.fill_checker_state()?;
 
-            //接受等待队列中的块，校验片是否完整。
+            //校验等待队列中的块，检查片是否完整。
             piece_checker_make.calculate_diff()?;
         }
 
@@ -56,7 +56,7 @@ where
             state_checker: checker_state,
         }
     }
-    //校验文件每一个片的完成情况。
+    // 校验片队列中每一个片的完成情况。
     /// Calculate the diff of old to new good/bad pieces and store them in the piece checker state
     /// to be retrieved by the caller.
     pub fn calculate_diff(self) -> io::Result<()> {
