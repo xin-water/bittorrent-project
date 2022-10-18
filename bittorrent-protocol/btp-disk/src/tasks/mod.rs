@@ -10,7 +10,7 @@ use self::context::DiskManagerContext;
 
 mod helpers;
 use self::helpers::piece_accessor::PieceAccessor;
-use self::helpers::piece_checker::{PieceChecker, PieceCheckerState, PieceState};
+use self::helpers::piece_checker::{PieceCheckerMake, PieceStateChecker, PieceState};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::task;
@@ -87,14 +87,14 @@ where
     F: FileSystem,
 {
     let info_hash = file.info().info_hash();
-    let mut init_state = PieceChecker::init_state(context.filesystem(), file.info()).expect("PieceChecker init_state error");
+    let mut init_state_checker = PieceCheckerMake::init_state_checker(context.filesystem(), file.info()).expect("PieceChecker init_state error");
 
     info!("PieceChecker init_state complete ");
 
     // In case we are resuming a download, we need to send the diff for the newly added torrent
-    send_piece_diff(&mut init_state, info_hash, blocking_sender.clone(), true);
+    send_piece_diff(&mut init_state_checker, info_hash, blocking_sender.clone(), true);
 
-    if context.insert_torrent(file, init_state) {
+    if context.insert_torrent(file, init_state_checker) {
         blocking_sender
             .send(ODiskMessage::TorrentAdded(info_hash))
             .expect("execute_add_torrent send message fail");
@@ -213,7 +213,7 @@ where
         block_result = piece_accessor.write_piece(&block, &metadata).and_then(|_| {
             checker_state.add_pending_block(metadata);
 
-            PieceChecker::with_state(
+            PieceCheckerMake::with_state_checker(
                 context.filesystem(),
                 metainfo_file.info(),
                 &mut checker_state,
@@ -244,7 +244,7 @@ where
 }
 
 fn send_piece_diff(
-    checker_state: &mut PieceCheckerState,
+    checker_state: &mut PieceStateChecker,
     hash: InfoHash,
     blocking_sender: mpsc::UnboundedSender<ODiskMessage>,
     ignore_bad: bool,

@@ -12,40 +12,40 @@ use btp_metainfo::Info;
 use btp_util::bt::InfoHash;
 
 /// Calculates hashes on existing files within the file system given and reports good/bad pieces.
-pub struct PieceChecker<'a, F> {
+pub struct PieceCheckerMake<'a, F> {
     fs: F,
     info_dict: &'a Info,
-    checker_state: &'a mut PieceCheckerState,
+    checker_state: &'a mut PieceStateChecker,
 }
 
-impl<'a, F> PieceChecker<'a, F>
+impl<'a, F> PieceCheckerMake<'a, F>
 where
     F: FileSystem + 'a,
 {
     /// Create the initial PieceCheckerState for the PieceChecker.
-    pub fn init_state(fs: F, info_dict: &'a Info) -> TorrentResult<PieceCheckerState> {
+    pub fn init_state_checker(fs: F, info_dict: &'a Info) -> TorrentResult<PieceStateChecker> {
         let total_blocks = info_dict.pieces().count();
         let last_piece_size = last_piece_size(info_dict);
 
-        let mut checker_state = PieceCheckerState::new(total_blocks, last_piece_size);
+        let mut state_checker = PieceStateChecker::new(total_blocks, last_piece_size);
         {
-            let mut piece_checker = PieceChecker::with_state(fs, info_dict, &mut checker_state);
+            let mut piece_checker_make = PieceCheckerMake::with_state_checker(fs, info_dict, &mut state_checker);
 
-            piece_checker.validate_files_sizes()?;
-            piece_checker.fill_checker_state()?;
-            piece_checker.calculate_diff()?;
+            piece_checker_make.validate_files_sizes()?;
+            piece_checker_make.fill_checker_state()?;
+            piece_checker_make.calculate_diff()?;
         }
 
-        Ok(checker_state)
+        Ok(state_checker)
     }
 
     /// Create a new PieceChecker with the given state.
-    pub fn with_state(
+    pub fn with_state_checker(
         fs: F,
         info_dict: &'a Info,
-        checker_state: &'a mut PieceCheckerState,
-    ) -> PieceChecker<'a, F> {
-        PieceChecker {
+        checker_state: &'a mut PieceStateChecker,
+    ) -> PieceCheckerMake<'a, F> {
+        PieceCheckerMake {
             fs: fs,
             info_dict: info_dict,
             checker_state: checker_state,
@@ -174,7 +174,7 @@ fn last_piece_size(info_dict: &Info) -> usize {
 
 /// Stores state for the PieceChecker between invocations.
 #[derive(Clone)]
-pub struct PieceCheckerState {
+pub struct PieceStateChecker {
     new_states: Vec<PieceState>,
     old_states: HashSet<PieceState>,
     pending_blocks: HashMap<u64, Vec<BlockMetadata>>,
@@ -199,10 +199,10 @@ impl PieceState{
     }
 }
 
-impl PieceCheckerState {
+impl PieceStateChecker {
     /// Create a new PieceCheckerState.
-    pub fn new(total_blocks: usize, last_block_size: usize) -> PieceCheckerState {
-        PieceCheckerState {
+    pub fn new(total_blocks: usize, last_block_size: usize) -> PieceStateChecker {
+        PieceStateChecker {
             new_states: Vec::new(),
             old_states: HashSet::new(),
             pending_blocks: HashMap::new(),

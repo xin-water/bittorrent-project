@@ -3,11 +3,14 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 
 use futures::sink::Sink;
-use crate::tasks::helpers::piece_checker::PieceCheckerState;
+use crate::tasks::helpers::piece_checker::PieceStateChecker;
 use crate::ODiskMessage;
 use btp_metainfo::Metainfo;
 use btp_util::bt::InfoHash;
 
+// 锁内部的对象是不能为异步的，
+// await的时候会一直持有锁，导致其他协程拿不到锁，
+// 线程直接卡死，异步没了意义
 pub struct DiskManagerContext<F> {
     torrents: Arc<RwLock<HashMap<InfoHash, Mutex<MetainfoState>>>>,
     //out: Sender<ODiskMessage>,
@@ -16,11 +19,11 @@ pub struct DiskManagerContext<F> {
 #[derive(Clone)]
 pub struct MetainfoState {
     file: Metainfo,
-    state: PieceCheckerState,
+    state: PieceStateChecker,
 }
 
 impl MetainfoState {
-    pub fn new(file: Metainfo, state: PieceCheckerState) -> MetainfoState {
+    pub fn new(file: Metainfo, state: PieceStateChecker) -> MetainfoState {
         MetainfoState {
             file: file,
             state: state,
@@ -44,7 +47,7 @@ impl<F> DiskManagerContext<F> {
         &self.fs
     }
 
-    pub fn insert_torrent(&self, file: Metainfo, state: PieceCheckerState) -> bool {
+    pub fn insert_torrent(&self, file: Metainfo, state: PieceStateChecker) -> bool {
         let mut write_torrents = self.torrents.write().expect(
             "bittorrent-protocol_disk: DiskManagerContext::insert_torrents Failed To Write Torrent",
         );
@@ -61,7 +64,7 @@ impl<F> DiskManagerContext<F> {
 
     pub fn update_torrent<C>(&self, hash: InfoHash, call: C) -> bool
     where
-        C: FnOnce(&Metainfo, &mut PieceCheckerState),
+        C: FnOnce(&Metainfo, &mut PieceStateChecker),
     {
         let read_torrents = self.torrents.read().expect(
             "bittorrent-protocol_disk: DiskManagerContext::update_torrent Failed To Read Torrent",
