@@ -59,7 +59,7 @@ impl<F> DiskManagerContext<F> {
         hash_not_exists
     }
 
-    pub fn update_torrent<C>(&self, hash: InfoHash, call: C) -> Result<PieceCheckerState,()>
+    pub fn update_torrent<C>(&self, hash: InfoHash, call: C) -> bool
     where
         C: FnOnce(&Metainfo, &mut PieceCheckerState),
     {
@@ -76,9 +76,9 @@ impl<F> DiskManagerContext<F> {
 
                 call(&deref_state.file, &mut deref_state.state);
 
-                Ok(deref_state.state.clone())
+                true
             }
-            None => Err(()),
+            None => false,
         }
     }
 
