@@ -101,11 +101,11 @@ impl  DiskManagerSink {
 
 /// `DiskManagerStream` which is the stream portion of a `DiskManager`.
 pub struct DiskManagerStream {
-    recv: mpsc::Receiver<ODiskMessage>,
+    recv: mpsc::UnboundedReceiver<ODiskMessage>,
 }
 
 impl DiskManagerStream {
-    fn new(recv: mpsc::Receiver<ODiskMessage>) -> DiskManagerStream {
+    fn new(recv: mpsc::UnboundedReceiver<ODiskMessage>) -> DiskManagerStream {
         DiskManagerStream {
             recv: recv
         }

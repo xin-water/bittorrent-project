@@ -12,16 +12,16 @@ mod helpers;
 use self::helpers::piece_accessor::PieceAccessor;
 use self::helpers::piece_checker::{PieceChecker, PieceCheckerState, PieceState};
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::task;
 
-pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs: F) ->(mpsc::Sender<IDiskMessage>,mpsc::Receiver<ODiskMessage>)
+pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs: F) ->(mpsc::Sender<IDiskMessage>,mpsc::UnboundedReceiver<ODiskMessage>)
     where F: std::marker::Sync + std::marker::Send + 'static,
           F: FileSystem
 {
 
     let (in_message_tx,in_message_rx)= mpsc::channel(sink_capacity);
-    let (out_message_tx,out_message_rx)= mpsc::channel(stream_capacity);
+    let (out_message_tx,out_message_rx)= mpsc::unbounded_channel();
 
     let mut task_handler =TaskHandler::new(in_message_rx, out_message_tx, fs);
 
@@ -34,12 +34,12 @@ pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs
 pub(crate) struct TaskHandler<F>{
     context: DiskManagerContext<F>,
     in_message: mpsc::Receiver<IDiskMessage>,
-    out_message: mpsc::Sender<ODiskMessage>,
+    out_message: mpsc::UnboundedSender<ODiskMessage>,
 }
 
 impl<F: FileSystem> TaskHandler<F>{
     pub(crate) fn new(in_message: mpsc::Receiver<IDiskMessage>,
-                      out_message: mpsc::Sender<ODiskMessage>,fs: F) ->Self{
+                      out_message: mpsc::UnboundedSender<ODiskMessage>,fs: F) ->Self{
 
         TaskHandler{
             context:  DiskManagerContext::new(fs),
@@ -81,7 +81,7 @@ impl<F: FileSystem> TaskHandler<F>{
 async fn execute_add_torrent<F>(
     file: Metainfo,
     context: DiskManagerContext<F>,
-    blocking_sender: mpsc::Sender<ODiskMessage>,
+    blocking_sender: mpsc::UnboundedSender<ODiskMessage>,
 )
 where
     F: FileSystem,
@@ -97,26 +97,23 @@ where
     if context.insert_torrent(file, init_state) {
         blocking_sender
             .send(ODiskMessage::TorrentAdded(info_hash))
-            .await
             .expect("execute_add_torrent send message fail");
     } else {
         blocking_sender
             .send(ODiskMessage::TorrentError(info_hash, TorrentError::from_kind(
             TorrentErrorKind::ExistingInfoHash { hash: info_hash },
         )))
-            .await
             .expect("execute_add_torrent send message fail");
     }
 }
 
-async fn execute_remove_torrent<F>(hash: InfoHash, context: DiskManagerContext<F>,out_message: Sender<ODiskMessage>)
+async fn execute_remove_torrent<F>(hash: InfoHash, context: DiskManagerContext<F>,out_message: UnboundedSender<ODiskMessage>)
 where
     F: FileSystem,
 {
     if context.remove_torrent(hash) {
         out_message
             .send(ODiskMessage::TorrentRemoved(hash))
-            .await
             .expect("execute_remove_torrent send message fail");
 
     } else {
@@ -125,12 +122,11 @@ where
             .send(ODiskMessage::TorrentError(hash, TorrentError::from_kind(
                 TorrentErrorKind::InfoHashNotFound { hash: hash },
             )))
-            .await
             .expect("execute_remove_torrent send message fail");
     }
 }
 
-async fn execute_sync_torrent<F>(hash: InfoHash, context: DiskManagerContext<F>,out_message:Sender<ODiskMessage>)
+async fn execute_sync_torrent<F>(hash: InfoHash, context: DiskManagerContext<F>,out_message:UnboundedSender<ODiskMessage>)
 where
     F: FileSystem,
 {
@@ -151,7 +147,6 @@ where
         //Ok(sync_result?)
         out_message
             .send(ODiskMessage::TorrentSynced(hash))
-            .await
             .expect("execute_sync_torrent send message fail");
     } else {
 
@@ -159,12 +154,11 @@ where
             .send(ODiskMessage::TorrentError(hash, TorrentError::from_kind(
             TorrentErrorKind::InfoHashNotFound { hash: hash },
         )))
-            .await
             .expect("execute_sync_torrent send message fail");
     }
 }
 
-async fn execute_load_block<F>(mut block: BlockMut, context: DiskManagerContext<F>,out_message:Sender<ODiskMessage>)
+async fn execute_load_block<F>(mut block: BlockMut, context: DiskManagerContext<F>,out_message:mpsc::UnboundedSender<ODiskMessage>)
 where
     F: FileSystem,
 {
@@ -183,7 +177,6 @@ where
         //Ok(access_result?)
         out_message
             .send(ODiskMessage::BlockLoaded(block))
-            .await
             .expect("execute_load_block send message fail");
 
     } else {
@@ -192,7 +185,6 @@ where
             .send(ODiskMessage::LoadBlockError(block, BlockError::from_kind(BlockErrorKind::InfoHashNotFound {
                 hash: info_hash,
             })))
-            .await
             .expect("execute_load_block send message fail");
     }
 }
@@ -200,7 +192,7 @@ where
 async fn execute_process_block<F>(
     mut block: Block,
     context: DiskManagerContext<F>,
-    out_message: mpsc::Sender<ODiskMessage>,
+    out_message: mpsc::UnboundedSender<ODiskMessage>,
 )
 where
     F: FileSystem,
@@ -243,14 +235,12 @@ where
         send_piece_diff(&mut stat, info_hash, out_message.clone(), false).await;
         out_message
             .send(ODiskMessage::BlockProcessed(block))
-            .await
             .expect("execute_process_block send message fail");
     } else {
         out_message
             .send(ODiskMessage::ProcessBlockError(block, BlockError::from_kind(BlockErrorKind::InfoHashNotFound {
                 hash: info_hash,
             })))
-            .await
             .expect("execute_process_block send message fail");
     }
 }
@@ -258,7 +248,7 @@ where
 async fn send_piece_diff(
     checker_state: &mut PieceCheckerState,
     hash: InfoHash,
-    blocking_sender: Sender<ODiskMessage>,
+    blocking_sender: mpsc::UnboundedSender<ODiskMessage>,
     ignore_bad: bool,
 ) {
     let index_vec= checker_state.run_with_diff(move |piece_state|{
@@ -272,7 +262,6 @@ async fn send_piece_diff(
     for index in index_vec {
         blocking_sender
             .send(ODiskMessage::FoundGoodPiece(hash, index))
-            .await
             .expect("bittorrent-protocol_disk: Failed To Flush Piece State Message");
     }
 }
