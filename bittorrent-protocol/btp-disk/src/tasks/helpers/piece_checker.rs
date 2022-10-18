@@ -115,7 +115,8 @@ where
                 ));
         }
 
-        if last_piece_size != 0 {
+        // 最后片长度不等于标准片长，说明余一片要加进去
+        if last_piece_size != piece_length {
             self.state_checker
                 .add_pending_block(BlockMetadata::with_default_hash(
                     full_pieces,
