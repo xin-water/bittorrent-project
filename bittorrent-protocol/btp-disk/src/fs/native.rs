@@ -17,7 +17,8 @@ impl NativeFile {
         NativeFile { file: file }
     }
 }
-
+// 处理 相对路径文件对象
+// 因为bt里的文件都只有最后一层关系。
 /// File system that maps to the OS file system.
 pub struct NativeFileSystem {
     current_dir: PathBuf,

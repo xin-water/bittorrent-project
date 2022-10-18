@@ -69,7 +69,7 @@ where
 
         //片的长度应该放在校验器里。
         self.state_checker.run_with_whole_pieces(piece_length as usize, |message| {
-            log::warn!("check piece: {:?}",message.piece_index());
+            log::trace!("check piece: {:?}",message.piece_index());
             // 读取传递过来的块，判断它与片hash是否一样，除非传递过来的是块片，
             // 这里可以直接改为读取 片的长度。
             piece_accessor.read_piece(&mut piece_buffer[..message.block_length()], message)?;
@@ -269,9 +269,11 @@ impl PieceStateChecker {
         for messages in self
             .pending_blocks
             .values_mut()
+            // 过虑出完整片，此时的块与片一样长
             .filter(|ref messages| {
                 piece_is_complete(total_blocks, last_block_size, piece_length, messages)
             })
+            // 旧状态里面非完整的片。
             .filter(|ref messages| {
                 !old_states.contains(&PieceState::Good(messages[0].piece_index()))
             })
@@ -289,6 +291,31 @@ impl PieceStateChecker {
         }
 
         Ok(())
+    }
+
+    // 判断片是否完整，根据块长度来判断。
+    /// True if the piece is ready to be hashed and checked (full) as good or not.
+    fn piece_is_complete(
+        total_blocks: usize,
+        last_block_size: usize,
+        piece_length: usize,
+        messages: &[BlockMetadata],
+    ) -> bool {
+        let is_single_message = messages.len() == 1;
+        let is_piece_length = messages
+            .get(0)
+            .map(|message| message.block_length() == piece_length)
+            .unwrap_or(false);
+        let is_last_block = messages
+            .get(0)
+            .map(|message| message.piece_index() == (total_blocks - 1) as u64)
+            .unwrap_or(false);
+        let is_last_block_length = messages
+            .get(0)
+            .map(|message| message.block_length() == last_block_size)
+            .unwrap_or(false);
+
+        is_single_message && (is_piece_length || (is_last_block && is_last_block_length))
     }
 
     /// Merges all pending piece messages into a single messages if possible.
@@ -322,30 +349,6 @@ impl PieceStateChecker {
             }
         }
     }
-}
-
-/// True if the piece is ready to be hashed and checked (full) as good or not.
-fn piece_is_complete(
-    total_blocks: usize,
-    last_block_size: usize,
-    piece_length: usize,
-    messages: &[BlockMetadata],
-) -> bool {
-    let is_single_message = messages.len() == 1;
-    let is_piece_length = messages
-        .get(0)
-        .map(|message| message.block_length() == piece_length)
-        .unwrap_or(false);
-    let is_last_block = messages
-        .get(0)
-        .map(|message| message.piece_index() == (total_blocks - 1) as u64)
-        .unwrap_or(false);
-    let is_last_block_length = messages
-        .get(0)
-        .map(|message| message.block_length() == last_block_size)
-        .unwrap_or(false);
-
-    is_single_message && (is_piece_length || (is_last_block && is_last_block_length))
 }
 
 /// Merge a piece message a with a piece message b if possible.
