@@ -92,7 +92,7 @@ where
     info!("PieceChecker init_state complete ");
 
     // In case we are resuming a download, we need to send the diff for the newly added torrent
-    send_piece_diff(&mut init_state, info_hash, blocking_sender.clone(), true).await;
+    send_piece_diff(&mut init_state, info_hash, blocking_sender.clone(), true);
 
     if context.insert_torrent(file, init_state) {
         blocking_sender
@@ -143,7 +143,7 @@ where
         }
     });
 
-    if let Ok(state) = found_hash {
+    if found_hash {
         //Ok(sync_result?)
         out_message
             .send(ODiskMessage::TorrentSynced(hash))
@@ -173,7 +173,7 @@ where
         access_result = piece_accessor.read_piece(&mut *block, &metadata)
     });
 
-    if let Ok(state) = found_hash {
+    if found_hash {
         //Ok(access_result?)
         out_message
             .send(ODiskMessage::BlockLoaded(block))
@@ -221,18 +221,16 @@ where
             .calculate_diff()
         });
 
+        send_piece_diff(&mut checker_state, info_hash, out_message.clone(), false);
+
         info!(
             "Processsing Block, Released Torrent Lock For {:?}",
             metainfo_file.info().info_hash()
         );
     });
 
-    if let Ok(mut stat) = found_hash {
-        // task::spawn(
-        //     send_piece_diff(*checker_state, metainfo_file.info().info_hash(), out_message.clone(), false)
-        // );
+    if found_hash {
         //Ok(block_result?)
-        send_piece_diff(&mut stat, info_hash, out_message.clone(), false).await;
         out_message
             .send(ODiskMessage::BlockProcessed(block))
             .expect("execute_process_block send message fail");
@@ -245,7 +243,7 @@ where
     }
 }
 
-async fn send_piece_diff(
+fn send_piece_diff(
     checker_state: &mut PieceCheckerState,
     hash: InfoHash,
     blocking_sender: mpsc::UnboundedSender<ODiskMessage>,
