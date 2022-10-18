@@ -11,6 +11,7 @@ use btp_util::bt::InfoHash;
 // 锁内部的对象是不能为异步的，
 // await的时候会一直持有锁，导致其他协程拿不到锁，
 // 线程直接卡死，异步没了意义
+// 加了双重锁，削弱阻塞范围，针对单个torrent对象的可以使用异步，反正只会锁住它自己
 pub struct DiskManagerContext<F> {
     torrents: Arc<RwLock<HashMap<InfoHash, Mutex<MetainfoState>>>>,
     //out: Sender<ODiskMessage>,
