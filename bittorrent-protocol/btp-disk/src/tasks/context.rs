@@ -13,7 +13,7 @@ use btp_util::bt::InfoHash;
 // 线程直接卡死，异步没了意义
 // 加了双重锁，削弱阻塞范围，针对单个torrent对象的可以使用异步，反正只会锁住它自己
 pub struct DiskManagerContext<F> {
-    torrents: Arc<RwLock<HashMap<InfoHash, Mutex<MetainfoState>>>>,
+    torrent_contexts: Arc<RwLock<HashMap<InfoHash, Mutex<MetainfoState>>>>,
     //out: Sender<ODiskMessage>,
     fs: Arc<F>,
 }
@@ -32,10 +32,13 @@ impl MetainfoState {
     }
 }
 
+// 包含文件操作对象
+// 种子上下文集合 本质是一个hashmap  k为种子info信息，v为片状态检查器
+//   由于要协程并发，所以双重锁。
 impl<F> DiskManagerContext<F> {
     pub fn new(fs: F) -> DiskManagerContext<F> {
         DiskManagerContext {
-            torrents: Arc::new(RwLock::new(HashMap::new())),
+            torrent_contexts: Arc::new(RwLock::new(HashMap::new())),
             fs: Arc::new(fs),
         }
     }
@@ -49,7 +52,7 @@ impl<F> DiskManagerContext<F> {
     }
 
     pub fn insert_torrent(&self, file: Metainfo, state: PieceStateChecker) -> bool {
-        let mut write_torrents = self.torrents.write().expect(
+        let mut write_torrents = self.torrent_contexts.write().expect(
             "bittorrent-protocol_disk: DiskManagerContext::insert_torrents Failed To Write Torrent",
         );
 
@@ -63,11 +66,11 @@ impl<F> DiskManagerContext<F> {
         hash_not_exists
     }
 
-    pub fn update_torrent<C>(&self, hash: InfoHash, call: C) -> bool
+    pub fn update_torrent_context<C>(&self, hash: InfoHash, call: C) -> bool
     where
         C: FnOnce(&Metainfo, &mut PieceStateChecker),
     {
-        let read_torrents = self.torrents.read().expect(
+        let read_torrents = self.torrent_contexts.read().expect(
             "bittorrent-protocol_disk: DiskManagerContext::update_torrent Failed To Read Torrent",
         );
 
@@ -87,7 +90,7 @@ impl<F> DiskManagerContext<F> {
     }
 
     pub fn remove_torrent(&self, hash: InfoHash) -> bool {
-        let mut write_torrents = self.torrents.write().expect(
+        let mut write_torrents = self.torrent_contexts.write().expect(
             "bittorrent-protocol_disk: DiskManagerContext::remove_torrent Failed To Write Torrent",
         );
 
@@ -98,7 +101,7 @@ impl<F> DiskManagerContext<F> {
 impl<F> Clone for DiskManagerContext<F> {
     fn clone(&self) -> DiskManagerContext<F> {
         DiskManagerContext {
-            torrents: self.torrents.clone(),
+            torrent_contexts: self.torrent_contexts.clone(),
             fs: self.fs.clone(),
         }
     }

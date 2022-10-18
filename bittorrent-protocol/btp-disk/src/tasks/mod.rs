@@ -131,7 +131,7 @@ where
     let filesystem = context.filesystem();
 
     let mut sync_result = Ok(());
-    let found_hash = context.update_torrent(hash, |metainfo_file, _| {
+    let found_hash = context.update_torrent_context(hash, |metainfo_file, _| {
         let opt_parent_dir = metainfo_file.info().directory();
 
         for file in metainfo_file.info().files() {
@@ -164,7 +164,7 @@ where
     let info_hash = metadata.info_hash();
 
     let mut access_result = Ok(());
-    let found_hash = context.update_torrent(info_hash, |metainfo_file, _| {
+    let found_hash = context.update_torrent_context(info_hash, |metainfo_file, _| {
         let piece_accessor = PieceAccessor::new(context.filesystem(), metainfo_file.info());
 
         // Read The Piece In From The Filesystem
@@ -199,7 +199,7 @@ where
     let info_hash = metadata.info_hash();
 
     let mut block_result = Ok(());
-    let found_hash = context.update_torrent(info_hash, |metainfo_file, mut checker_state| {
+    let found_hash = context.update_torrent_context(info_hash, |metainfo_file, mut checker_state| {
         info!(
             "Processsing Block, Acquired Torrent Lock For {:?}",
             metainfo_file.info().info_hash()
