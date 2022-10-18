@@ -15,7 +15,7 @@ use btp_util::bt::InfoHash;
 pub struct PieceCheckerMake<'a, F> {
     fs: F,
     info_dict: &'a Info,
-    checker_state: &'a mut PieceStateChecker,
+    state_checker: &'a mut PieceStateChecker,
 }
 
 impl<'a, F> PieceCheckerMake<'a, F>
@@ -31,8 +31,13 @@ where
         {
             let mut piece_checker_make = PieceCheckerMake::with_state_checker(fs, info_dict, &mut state_checker);
 
+            //校验所有文件，不存在则创建，并在每个文件最后一个字节写入数据0,
             piece_checker_make.validate_files_sizes()?;
+
+            //根据info字典初始化文件块，放到等待队列中，块与片一样大
             piece_checker_make.fill_checker_state()?;
+
+            //接受等待队列中的块，校验片是否完整。
             piece_checker_make.calculate_diff()?;
         }
 
@@ -48,10 +53,10 @@ where
         PieceCheckerMake {
             fs: fs,
             info_dict: info_dict,
-            checker_state: checker_state,
+            state_checker: checker_state,
         }
     }
-
+    //校验文件每一个片的完成情况。
     /// Calculate the diff of old to new good/bad pieces and store them in the piece checker state
     /// to be retrieved by the caller.
     pub fn calculate_diff(self) -> io::Result<()> {
@@ -62,7 +67,11 @@ where
         let info_dict = self.info_dict;
         let piece_accessor = PieceAccessor::new(&self.fs, self.info_dict);
 
-        self.checker_state.run_with_whole_pieces(piece_length as usize, |message| {
+        //片的长度应该放在校验器里。
+        self.state_checker.run_with_whole_pieces(piece_length as usize, |message| {
+            log::warn!("check piece: {:?}",message.piece_index());
+            // 读取传递过来的块，判断它与片hash是否一样，除非传递过来的是块片，
+            // 这里可以直接改为读取 片的长度。
             piece_accessor.read_piece(&mut piece_buffer[..message.block_length()], message)?;
 
             let calculated_hash = InfoHash::from_bytes(&piece_buffer[..message.block_length()]);
@@ -81,6 +90,7 @@ where
         Ok(())
     }
 
+    // 初始化片状态，存放到等待列表中
     /// Fill the PieceCheckerState with all piece messages for each file in our info dictionary.
     ///
     /// This is done once when a torrent file is added to see if we have any good pieces that
@@ -97,7 +107,7 @@ where
         let last_piece_size = last_piece_size(self.info_dict);
 
         for piece_index in 0..full_pieces {
-            self.checker_state
+            self.state_checker
                 .add_pending_block(BlockMetadata::with_default_hash(
                     piece_index,
                     0,
@@ -106,7 +116,7 @@ where
         }
 
         if last_piece_size != 0 {
-            self.checker_state
+            self.state_checker
                 .add_pending_block(BlockMetadata::with_default_hash(
                     full_pieces,
                     0,
@@ -139,12 +149,14 @@ where
                     let size_matches = actual_size == expected_size;
                     let size_is_zero = actual_size == 0;
 
+                    //文件不存在时
                     if !size_matches && size_is_zero {
                         self.fs
                             .write_file(&mut file, expected_size - 1, &[0])
                             .expect(
                             "bittorrent-protocol_peer: Failed To Create File When Validating Sizes",
                         );
+                    // 文件存在但不完整时
                     } else if !size_matches {
                         return Err(TorrentError::from_kind(
                             TorrentErrorKind::ExistingFileSizeCheck {
@@ -229,7 +241,7 @@ impl PieceStateChecker {
         for piece_state in self.new_states.drain(..) {
 
             if callback(piece_state.clone()){
-                result.push(piece_state.get_index())
+                result.push(piece_state.get_index());
             }
 
             self.old_states.insert(piece_state);
@@ -238,6 +250,7 @@ impl PieceStateChecker {
         result
     }
 
+    // 传递等待列表中的片给闭包，根据返回生成片状态对象，插入new_state中
     /// Pass any pieces that have not been identified as OldGood into the callback which determines
     /// if the piece is good or bad so it can be marked as NewGood or NewBad.
     fn run_with_whole_pieces<F>(&mut self, piece_length: usize, mut callback: F) -> io::Result<()>
@@ -252,6 +265,7 @@ impl PieceStateChecker {
         let total_blocks = self.total_blocks;
         let last_block_size = self.last_block_size;
 
+        // 从等待列表里 过虑出现在已完成的、旧状态里未完成的块： 新完成的块
         for messages in self
             .pending_blocks
             .values_mut()
