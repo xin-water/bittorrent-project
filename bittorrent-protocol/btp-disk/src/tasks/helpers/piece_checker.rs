@@ -116,7 +116,7 @@ where
         }
 
         // 最后片长度不等于标准片长，说明余一片要加进去
-        if last_piece_size != piece_length {
+        if last_piece_size != (piece_length as usize)  {
             self.state_checker
                 .add_pending_block(BlockMetadata::with_default_hash(
                     full_pieces,
@@ -294,31 +294,6 @@ impl PieceStateChecker {
         Ok(())
     }
 
-    // 判断片是否完整，根据块长度来判断。
-    /// True if the piece is ready to be hashed and checked (full) as good or not.
-    fn piece_is_complete(
-        total_blocks: usize,
-        last_block_size: usize,
-        piece_length: usize,
-        messages: &[BlockMetadata],
-    ) -> bool {
-        let is_single_message = messages.len() == 1;
-        let is_piece_length = messages
-            .get(0)
-            .map(|message| message.block_length() == piece_length)
-            .unwrap_or(false);
-        let is_last_block = messages
-            .get(0)
-            .map(|message| message.piece_index() == (total_blocks - 1) as u64)
-            .unwrap_or(false);
-        let is_last_block_length = messages
-            .get(0)
-            .map(|message| message.block_length() == last_block_size)
-            .unwrap_or(false);
-
-        is_single_message && (is_piece_length || (is_last_block && is_last_block_length))
-    }
-
     /// Merges all pending piece messages into a single messages if possible.
     fn merge_pieces(&mut self) {
         for (_, ref mut messages) in self.pending_blocks.iter_mut() {
@@ -400,6 +375,33 @@ fn merge_piece_messages(
         None
     }
 }
+
+
+// 判断片是否完整，根据块长度来判断。
+/// True if the piece is ready to be hashed and checked (full) as good or not.
+fn piece_is_complete(
+    total_blocks: usize,
+    last_block_size: usize,
+    piece_length: usize,
+    messages: &[BlockMetadata],
+) -> bool {
+    let is_single_message = messages.len() == 1;
+    let is_piece_length = messages
+        .get(0)
+        .map(|message| message.block_length() == piece_length)
+        .unwrap_or(false);
+    let is_last_block = messages
+        .get(0)
+        .map(|message| message.piece_index() == (total_blocks - 1) as u64)
+        .unwrap_or(false);
+    let is_last_block_length = messages
+        .get(0)
+        .map(|message| message.block_length() == last_block_size)
+        .unwrap_or(false);
+
+    is_single_message && (is_piece_length || (is_last_block && is_last_block_length))
+}
+
 
 #[cfg(test)]
 mod tests {
