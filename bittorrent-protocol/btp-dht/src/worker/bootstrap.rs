@@ -10,7 +10,7 @@ use crate::routing::table::{self, BucketContents, RoutingTable};
 use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::ScheduledTask;
 use btp_util::bt::{self, NodeId};
-use crate::worker::timer::{Timeout, Timer};
+use btp_util::timer::{Timeout, Timer};
 
 const BOOTSTRAP_INITIAL_TIMEOUT: Duration = Duration::from_millis(2500);
 const BOOTSTRAP_NODE_TIMEOUT: Duration = Duration::from_millis(500);

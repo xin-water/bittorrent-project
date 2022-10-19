@@ -16,7 +16,7 @@ use crate::routing::node::{Node, NodeHandle, NodeStatus};
 use crate::routing::table::RoutingTable;
 use crate::transaction::{MIDGenerator, TransactionID};
 use crate::worker::ScheduledTask;
-use crate::worker::timer::{Timeout, Timer};
+use btp_util::timer::{Timeout, Timer};
 
 const LOOKUP_TIMEOUT_MS: Duration = Duration::from_millis(1500);
 const ENDGAME_TIMEOUT_MS: Duration = Duration::from_millis(1500);

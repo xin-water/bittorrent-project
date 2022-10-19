@@ -10,7 +10,7 @@ use crate::routing::node::NodeStatus;
 use crate::routing::table::{self, RoutingTable};
 use crate::transaction::MIDGenerator;
 use crate::worker::ScheduledTask;
-use crate::worker::timer::Timer;
+use btp_util::timer::{Timeout, Timer};
 
 const REFRESH_INTERVAL_TIMEOUT: Duration = Duration::from_millis(6000);
 const REFRESH_0_TIMEOUT: Duration = Duration::from_millis(3000);

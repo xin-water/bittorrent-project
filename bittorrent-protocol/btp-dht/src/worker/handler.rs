@@ -17,6 +17,8 @@ use btp_bencode::{BDecodeOpt, BencodeRef};
 use btp_util::bt::InfoHash;
 use btp_util::convert;
 use btp_util::net::IpAddr;
+use btp_util::timer::{Timer,Timeout};
+
 use crate::error::{DhtError, DhtResult};
 
 use crate::message::announce_peer::{AnnouncePeerResponse, ConnectPort};
@@ -45,7 +47,6 @@ use crate::worker::lookup::{LookupStatus, TableLookup};
 use crate::worker::refresh::{RefreshStatus, TableRefresh};
 use crate::worker::{DhtEvent, DhtStatus, DhtValues, OneshotTask, ScheduledTask, ShutdownCause};
 use crate::worker::socket::{DhtSocket, IpVersion};
-use crate::worker::timer::Timer;
 
 // TODO: Update modules to use find_node on the routing table to update the status of a given node.
 

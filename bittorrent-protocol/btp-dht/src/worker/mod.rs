@@ -18,7 +18,7 @@ pub mod lookup;
 //pub mod messenger;
 pub mod refresh;
 pub mod socket;
-pub mod timer;
+//pub mod timer;
 
 /// Task that our DHT will execute immediately.
 // #[derive(Clone)]
