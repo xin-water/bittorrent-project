@@ -11,9 +11,12 @@ use self::context::DiskManagerContext;
 mod helpers;
 use self::helpers::piece_accessor::PieceAccessor;
 use self::helpers::piece_checker::{PieceCheckerMake, PieceStateChecker, PieceState};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc::{Sender, UnboundedSender};
-use tokio::task;
+use tokio::{select, task};
+use btp_util::timer::{Timer,Timeout};
+use futures::{stream,StreamExt};
 
 pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs: F) ->(mpsc::Sender<IDiskMessage>,mpsc::UnboundedReceiver<ODiskMessage>)
     where F: std::marker::Sync + std::marker::Send + 'static,
@@ -32,7 +35,9 @@ pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs
 }
 
 pub(crate) struct TaskHandler<F>{
+    is_run: bool,
     context: DiskManagerContext<F>,
+    timer: Timer<InfoHash>,
     in_message: mpsc::Receiver<IDiskMessage>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
 }
@@ -42,38 +47,73 @@ impl<F: FileSystem> TaskHandler<F>{
                       out_message: mpsc::UnboundedSender<ODiskMessage>,fs: F) ->Self{
 
         TaskHandler{
+            is_run :true,
             context:  DiskManagerContext::new(fs),
             in_message: in_message,
+            timer: Timer::new(),
             out_message: out_message,
         }
     }
 
+    fn shutdown(&mut self){
+        self.is_run = false;
+    }
+
     pub(crate) async fn run_task(mut self){
+        {
+            self.timer.schedule_in(Duration::from_secs(2), [0u8; 20].into());
+        }
+        while  self.is_run {
+          self.run_one().await;
+        }
 
-        while let Some(msg) = self.in_message.recv().await  {
+    }
 
-            match msg {
-                IDiskMessage::AddTorrent(metainfo) => {
-                    execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()).await
+   async fn run_one(&mut self){
+        select! {
+           msg  = self.in_message.recv() => {
+                if let Some(message) = msg {
+                    self.message_in_ex(message).await
+                } else {
+                    self.shutdown()
                 }
-                IDiskMessage::RemoveTorrent(hash) =>  {
-                    execute_remove_torrent(hash, self.context.clone(),self.out_message.clone()).await
-                },
-                IDiskMessage::SyncTorrent(hash) =>  {
-                    execute_sync_torrent(hash, self.context.clone(),self.out_message.clone()).await
-                },
-                IDiskMessage::LoadBlock(block) =>   {
-                    execute_load_block(block, self.context.clone(),self.out_message.clone()).await
-                },
-                IDiskMessage::ProcessBlock(block) => {
-                    execute_process_block(block, self.context.clone(), self.out_message.clone()).await
-                }
-            };
+            }
+
+           token = self.timer.next(), if !self.timer.is_empty() => {
+                let token = token.unwrap();
+                log::trace!("timeout_rx: {:?}",&token);
+                self.timeout_ex(token).await
+            }
+
         }
     }
 
+   async fn message_in_ex(&self,msg: IDiskMessage){
+        match msg {
+            IDiskMessage::AddTorrent(metainfo) => {
+                execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()).await
+            }
+            IDiskMessage::RemoveTorrent(hash) =>  {
+                execute_remove_torrent(hash, self.context.clone(),self.out_message.clone()).await
+            },
+            IDiskMessage::SyncTorrent(hash) =>  {
+                execute_sync_torrent(hash, self.context.clone(),self.out_message.clone()).await
+            },
+            IDiskMessage::LoadBlock(block) =>   {
+                execute_load_block(block, self.context.clone(),self.out_message.clone()).await
+            },
+            IDiskMessage::ProcessBlock(block) => {
+                execute_process_block(block, self.context.clone(), self.out_message.clone()).await
+            }
+        };
+    }
 
+    async  fn timeout_ex(&mut self,token: InfoHash){
+        execute_piece_check(token, self.context.clone(), self.out_message.clone()).await
+    }
 }
+
+
 
 
 async fn execute_add_torrent<F>(
@@ -239,6 +279,20 @@ where
             })))
             .expect("execute_process_block send message fail");
     }
+}
+
+
+
+async fn execute_piece_check<F>(
+    token: InfoHash,
+    context: DiskManagerContext<F>,
+    out_message: mpsc::UnboundedSender<ODiskMessage>,
+)
+    where
+        F: FileSystem,
+{
+    println!("check info {:?}",token);
+
 }
 
 fn send_piece_diff(
