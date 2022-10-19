@@ -321,11 +321,25 @@ where
 {
 
     let mut result = false;
+
+    //todo 加锁以后校验，锁太长时间了。影响性能。
     context.update_torrent_context(torrent_hash,|metainfo,state_checker|{
-          fill_checker_state(metainfo.info(),state_checker);
-          calculate_diff(metainfo.info(),state_checker,context.filesystem());
-          send_piece_diff(state_checker,torrent_hash,out_message.clone(),false);
-          result = true;
+
+        // todo 通过填充虚假片块，然后读一片较验一片，
+        // 问题1：太慢了，读的次数太多，不如一次读连续n片，然后一起校验
+        // 问题2：一个协程太慢，尝试开多个协程
+        // 问题3：校验后没有发送 片状态，没有校验进度。
+        fill_checker_state(metainfo.info(),state_checker);
+        let rs= state_checker.run_with_whole_pieces(metainfo.info(),context.filesystem().clone(),out_message.clone());
+
+        // 新校验算法，还未实现
+        //let rs= check_torrent(metainfo.info(),state_checker,out_message.clone(),context.filesystem());
+
+        if let Ok(_) = rs {
+            send_piece_diff(state_checker,torrent_hash,out_message.clone(),false);
+            result = true;
+        }
+
     });
 
     if result {
@@ -348,9 +362,11 @@ async fn execute_piece_check<F>(
         F: FileSystem,
 {
     context.update_torrent_context(token,|metainfo,state_checker|{
-       // fill_checker_state(metainfo.info(),state_checker);
-        calculate_diff(metainfo.info(),state_checker,context.filesystem());
-        send_piece_diff(state_checker,token,out_message.clone(),false);
+
+        if let Ok(_) = state_checker.run_with_whole_pieces(metainfo.info(),context.filesystem(),out_message.clone()){
+            send_piece_diff(state_checker,token,out_message.clone(),false);
+        }
+
     });
 }
 
@@ -413,37 +429,11 @@ fn fill_checker_state(info_dict: &Info, state_checker: &mut PieceStateChecker) -
     Ok(())
 }
 
-// 校验片队列中每一个片的完成情况。
-/// Calculate the diff of old to new good/bad pieces and store them in the piece checker state
-/// to be retrieved by the caller.
-pub fn calculate_diff<T>(info_dict: &Info, state_checker: &mut PieceStateChecker,fs: T) -> io::Result<()>
-where  T: FileSystem
+
+pub(crate) fn check_torrent<F>(info: &Info, checker: &mut PieceStateChecker, msg_out: mpsc::UnboundedSender<ODiskMessage>,fs: F)->io::Result<()>
+where F:FileSystem
 {
-    let piece_length = info_dict.piece_length() as u64;
-    // TODO: Use Block Allocator
-    let mut piece_buffer = vec![0u8; piece_length as usize];
 
-    let piece_accessor = PieceAccessor::new(fs, info_dict);
 
-    //片的长度应该放在校验器里。
-    state_checker.run_with_whole_pieces(piece_length as usize, |message| {
-        log::trace!("check piece: {:?}",message.piece_index());
-        // 读取传递过来的块，判断它与片hash是否一样，除非传递过来的是块片，
-        // 这里可以直接改为读取 片的长度。
-        piece_accessor.read_piece(&mut piece_buffer[..message.block_length()], message)?;
-
-        let calculated_hash = InfoHash::from_bytes(&piece_buffer[..message.block_length()]);
-        let expected_hash = InfoHash::from_hash(
-            info_dict
-                .pieces()
-                .skip(message.piece_index() as usize)
-                .next()
-                .expect("bittorrent-protocol_peer: Piece Checker Failed To Retrieve Expected Hash"),
-        )
-            .expect("bittorrent-protocol_peer: Wrong Length Of Expected Hash Received");
-
-        Ok(calculated_hash == expected_hash)
-    })?;
-
-    Ok(())
+Ok(())
 }

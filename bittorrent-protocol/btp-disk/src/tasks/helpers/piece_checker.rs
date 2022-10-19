@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use crate::error::{TorrentError, TorrentErrorKind, TorrentResult};
 use crate::tasks::helpers;
@@ -180,12 +181,12 @@ impl PieceStateChecker {
         result
     }
 
-    // 传递等待列表中的片给闭包，根据返回生成片状态对象，插入new_state中
+    // 校验片队列中每一个片的完成情况。
     /// Pass any pieces that have not been identified as OldGood into the callback which determines
     /// if the piece is good or bad so it can be marked as NewGood or NewBad.
-    pub(crate) fn run_with_whole_pieces<F>(&mut self, piece_length: usize, mut callback: F) -> io::Result<()>
+    pub(crate) fn run_with_whole_pieces<F>(&mut self, info_dict: &Info, fs: F, msg_out: mpsc::UnboundedSender<ODiskMessage>) -> io::Result<()>
     where
-        F: FnMut(&BlockMetadata) -> io::Result<bool>,
+        F: FileSystem,
     {
         self.merge_pieces();
 
@@ -194,6 +195,10 @@ impl PieceStateChecker {
 
         let total_blocks = self.total_blocks;
         let last_block_size = self.last_block_size;
+
+        let piece_accessor = PieceAccessor::new(fs, info_dict);
+        let piece_length =  info_dict.piece_length() as usize;
+        let mut piece_buffer = vec![0u8; piece_length];
 
         // 从等待列表里 过虑出现在已完成的、旧状态里未完成的块： 新完成的块
         for messages in self
@@ -208,12 +213,35 @@ impl PieceStateChecker {
                 !old_states.contains(&PieceState::Good(messages[0].piece_index()))
             })
         {
-            let is_good = callback(&messages[0])?;
 
-            if is_good {
+            let message = &messages[0];
+            log::trace!("check piece: {:?}",message.piece_index());
+
+            // 读取片，因为该块已经聚合，跟片一样大了。
+            piece_accessor.read_piece(&mut piece_buffer[..], message)?;
+
+            let calculated_hash = InfoHash::from_bytes(&piece_buffer[..]);
+            let expected_hash = InfoHash::from_hash(
+                info_dict
+                    .pieces()
+                    .skip(message.piece_index() as usize)
+                    .next()
+                    .expect("bittorrent-protocol_peer: Piece Checker Failed To Retrieve Expected Hash"),
+            )
+                .expect("bittorrent-protocol_peer: Wrong Length Of Expected Hash Received");
+
+            if calculated_hash == expected_hash {
                 new_states.push(PieceState::Good(messages[0].piece_index()));
+                msg_out.send(ODiskMessage::FoundGoodPiece(
+                    info_dict.info_hash(),
+                    messages[0].piece_index())
+                ).expect("run_with_whole_pieces FoundGoodPiece message fail ")
             } else {
                 new_states.push(PieceState::Bad(messages[0].piece_index()));
+                msg_out.send(ODiskMessage::FoundBadPiece(
+                    info_dict.info_hash(),
+                    messages[0].piece_index())
+                ).expect("run_with_whole_pieces FoundGoodPiece message fail ")
             }
 
             // TODO: Should do a partial clear if user callback errors.
