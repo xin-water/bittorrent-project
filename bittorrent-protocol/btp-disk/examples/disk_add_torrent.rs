@@ -31,7 +31,7 @@ async fn main() {
     init_log();
     info!("start run .......");
 
-    let torrent_path = "bittorrent-protocol/btp-disk/examples_data/torrent/music.torrent";
+    let torrent_path = "bittorrent-protocol/btp-disk/examples_data/torrent/ubuntu-22.04.1-desktop-amd64.iso.torrent";
     let download_path = "bittorrent-protocol/btp-disk/examples_data/download";
 
     let mut torrent_bytes = Vec::new();
@@ -57,6 +57,7 @@ async fn main() {
     info!("end send msg ");
 
     let mut good_pieces = 0;
+    let mut bad_pieces = 0;
 
     while let Some(msg) = disk_recv.recv().await {
 
@@ -65,14 +66,18 @@ async fn main() {
                 good_pieces += 1;
                 debug!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
              }
+             ODiskMessage::FoundBadPiece(_, _) => {
+                 bad_pieces += 1;
+                 debug!("{:?}: msg: FoundBadPiece ", Local::now().naive_local());
+             }
             ODiskMessage::TorrentAdded(hash) => {
                 info!("Torrent With Hash {:?} Successfully Added", hex::encode(hash));
              }
              ODiskMessage::CheckTorrented(hash) => {
                  info!("Torrent With Hash {:?} Successfully Check Torrent", hex::encode(hash));
                  info!(
-                    "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
-                     good_pieces, total_pieces
+                    "Torrent Has {:?} Good Pieces and {:?} Bad Pieces Out Of {:?} Total Pieces",
+                     good_pieces,good_pieces, total_pieces
                  );
                  break;
              }
