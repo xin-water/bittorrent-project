@@ -30,6 +30,8 @@ pub enum IDiskMessage {
     LoadBlock(BlockMut),
     /// Message to process the given block and persist it.
     ProcessBlock(Block),
+    // check infohash
+    CheckTorrent(InfoHash),
 }
 
 /// Messages that can be received from the `DiskManager`.
@@ -54,10 +56,14 @@ pub enum ODiskMessage {
     BlockLoaded(BlockMut),
     /// Message indicating that the given block has been processed.
     BlockProcessed(Block),
+    // check infohashed
+    CheckTorrented(InfoHash),
     /// Error occurring from a `AddTorrent` or `RemoveTorrent` message.
     TorrentError(InfoHash, TorrentError),
     /// Error occurring from a `LoadBlock` message.
     LoadBlockError(BlockMut, BlockError),
     /// Error occurring from a `ProcessBlock` message.
     ProcessBlockError(Block, BlockError),
+    CheckTorrentError(InfoHash),
+
 }

@@ -35,10 +35,10 @@ where
             piece_checker_make.validate_files_sizes()?;
 
             //根据info字典初始化文件块，放到等待队列中，块与片一样大
-            piece_checker_make.fill_checker_state()?;
+            //piece_checker_make.fill_checker_state()?;
 
             //校验等待队列中的块，检查片是否完整。
-            piece_checker_make.calculate_diff()?;
+            //piece_checker_make.calculate_diff()?;
         }
 
         Ok(state_checker)
@@ -55,77 +55,6 @@ where
             info_dict: info_dict,
             state_checker: checker_state,
         }
-    }
-    // 校验片队列中每一个片的完成情况。
-    /// Calculate the diff of old to new good/bad pieces and store them in the piece checker state
-    /// to be retrieved by the caller.
-    pub fn calculate_diff(self) -> io::Result<()> {
-        let piece_length = self.info_dict.piece_length() as u64;
-        // TODO: Use Block Allocator
-        let mut piece_buffer = vec![0u8; piece_length as usize];
-
-        let info_dict = self.info_dict;
-        let piece_accessor = PieceAccessor::new(&self.fs, self.info_dict);
-
-        //片的长度应该放在校验器里。
-        self.state_checker.run_with_whole_pieces(piece_length as usize, |message| {
-            log::trace!("check piece: {:?}",message.piece_index());
-            // 读取传递过来的块，判断它与片hash是否一样，除非传递过来的是块片，
-            // 这里可以直接改为读取 片的长度。
-            piece_accessor.read_piece(&mut piece_buffer[..message.block_length()], message)?;
-
-            let calculated_hash = InfoHash::from_bytes(&piece_buffer[..message.block_length()]);
-            let expected_hash = InfoHash::from_hash(
-                info_dict
-                    .pieces()
-                    .skip(message.piece_index() as usize)
-                    .next()
-                    .expect("bittorrent-protocol_peer: Piece Checker Failed To Retrieve Expected Hash"),
-            )
-            .expect("bittorrent-protocol_peer: Wrong Length Of Expected Hash Received");
-
-            Ok(calculated_hash == expected_hash)
-        })?;
-
-        Ok(())
-    }
-
-    // 初始化片状态，存放到等待列表中
-    /// Fill the PieceCheckerState with all piece messages for each file in our info dictionary.
-    ///
-    /// This is done once when a torrent file is added to see if we have any good pieces that
-    /// the caller can use to skip (if the torrent was partially downloaded before).
-    fn fill_checker_state(&mut self) -> io::Result<()> {
-        let piece_length = self.info_dict.piece_length() as u64;
-        let total_bytes: u64 = self
-            .info_dict
-            .files()
-            .map(|file| file.length() as u64)
-            .sum();
-
-        let full_pieces = total_bytes / piece_length;
-        let last_piece_size = last_piece_size(self.info_dict);
-
-        for piece_index in 0..full_pieces {
-            self.state_checker
-                .add_pending_block(BlockMetadata::with_default_hash(
-                    piece_index,
-                    0,
-                    piece_length as usize,
-                ));
-        }
-
-        // 最后片长度不等于标准片长，说明余一片要加进去
-        if last_piece_size != (piece_length as usize)  {
-            self.state_checker
-                .add_pending_block(BlockMetadata::with_default_hash(
-                    full_pieces,
-                    0,
-                    last_piece_size as usize,
-                ));
-        }
-
-        Ok(())
     }
 
     /// Validates the file sizes for the given torrent file and block allocates them if they do not exist.
@@ -176,7 +105,7 @@ where
     }
 }
 
-fn last_piece_size(info_dict: &Info) -> usize {
+pub(crate)  fn last_piece_size(info_dict: &Info) -> usize {
     let piece_length = info_dict.piece_length() as u64;
     let total_bytes: u64 = info_dict.files().map(|file| file.length() as u64).sum();
 
@@ -254,7 +183,7 @@ impl PieceStateChecker {
     // 传递等待列表中的片给闭包，根据返回生成片状态对象，插入new_state中
     /// Pass any pieces that have not been identified as OldGood into the callback which determines
     /// if the piece is good or bad so it can be marked as NewGood or NewBad.
-    fn run_with_whole_pieces<F>(&mut self, piece_length: usize, mut callback: F) -> io::Result<()>
+    pub(crate) fn run_with_whole_pieces<F>(&mut self, piece_length: usize, mut callback: F) -> io::Result<()>
     where
         F: FnMut(&BlockMetadata) -> io::Result<bool>,
     {

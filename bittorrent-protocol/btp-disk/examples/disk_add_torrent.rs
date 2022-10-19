@@ -47,10 +47,13 @@ async fn main() {
 
     let (mut disk_send, mut disk_recv) = disk_manager.into_parts();
 
-    let total_pieces = metainfo_file.info().pieces().count();
-
+    let info= metainfo_file.info();
+    let info_hash = info.info_hash();
+    let total_pieces = info.pieces().count();
     info!("start send msg ");
     disk_send.send(IDiskMessage::AddTorrent(metainfo_file)).await.expect("send message fail");
+    disk_send.send(IDiskMessage::CheckTorrent(info_hash)).await.expect("send message fail");
+
     info!("end send msg ");
 
     let mut good_pieces = 0;
@@ -64,7 +67,10 @@ async fn main() {
              }
             ODiskMessage::TorrentAdded(hash) => {
                 info!("Torrent With Hash {:?} Successfully Added", hex::encode(hash));
-                info!(
+             }
+             ODiskMessage::CheckTorrented(hash) => {
+                 info!("Torrent With Hash {:?} Successfully Check Torrent", hex::encode(hash));
+                 info!(
                     "Torrent Has {:?} Good Pieces Out Of {:?} Total Pieces",
                      good_pieces, total_pieces
                  );

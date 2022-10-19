@@ -1,8 +1,9 @@
+use std::io;
 use crate::error::{
     BlockError, BlockErrorKind, BlockResult, TorrentError, TorrentErrorKind, TorrentResult,
 };
-use crate::{Block, BlockMut, FileSystem, IDiskMessage, ODiskMessage};
-use btp_metainfo::Metainfo;
+use crate::{Block, BlockMetadata, BlockMut, FileSystem, IDiskMessage, ODiskMessage};
+use btp_metainfo::{Info, Metainfo};
 use btp_util::bt::InfoHash;
 use tokio::sync::mpsc;
 pub mod context;
@@ -17,6 +18,7 @@ use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::{select, task};
 use btp_util::timer::{Timer,Timeout};
 use futures::{stream,StreamExt};
+use crate::tasks::helpers::piece_checker::last_piece_size;
 
 pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs: F) ->(mpsc::Sender<IDiskMessage>,mpsc::UnboundedReceiver<ODiskMessage>)
     where F: std::marker::Sync + std::marker::Send + 'static,
@@ -115,6 +117,9 @@ impl<F: FileSystem> TaskHandler<F>{
             IDiskMessage::ProcessBlock(block) => {
                 execute_process_block(block, self.context.clone(), self.out_message.clone()).await
             }
+            IDiskMessage::CheckTorrent(info) => {
+                execute_check_torrent(info, self.context.clone(), self.out_message.clone()).await
+            }
         };
     }
 
@@ -140,7 +145,7 @@ where
     info!("PieceChecker init_state complete ");
 
     // In case we are resuming a download, we need to send the diff for the newly added torrent
-    send_piece_diff(&mut init_state_checker, info_hash, blocking_sender.clone(), true);
+    // send_piece_diff(&mut init_state_checker, info_hash, blocking_sender.clone(), true);
 
     if context.insert_torrent(file, init_state_checker) {
         blocking_sender
@@ -248,8 +253,9 @@ where
     let metadata = block.metadata();
     let info_hash = metadata.info_hash();
 
-    let mut block_result = Ok(());
-    let found_hash = context.update_torrent_context(info_hash, |metainfo_file, mut checker_state| {
+    let mut found_hash = false;
+
+    context.update_torrent_context(info_hash, |metainfo_file, mut checker_state| {
         info!(
             "Processsing Block, Acquired Torrent Lock For {:?}",
             metainfo_file.info().info_hash()
@@ -258,18 +264,12 @@ where
         let piece_accessor = PieceAccessor::new(context.filesystem(), metainfo_file.info());
 
         // Write Out Piece Out To The Filesystem And Recalculate The Diff
-        block_result = piece_accessor.write_piece(&block, &metadata).and_then(|_| {
+        if let Ok(_) =piece_accessor.write_piece(&block, &metadata){
             checker_state.add_pending_block(metadata);
-
-            PieceCheckerMake::with_state_checker(
-                context.filesystem(),
-                metainfo_file.info(),
-                &mut checker_state,
-            )
-            .calculate_diff()
-        });
-
-        send_piece_diff(&mut checker_state, info_hash, out_message.clone(), false);
+            // calculate_diff(metainfo_file.info(),&mut checker_state,context.filesystem())
+            //send_piece_diff(&mut checker_state, info_hash, out_message.clone(), false);
+            found_hash= true;
+        }
 
         info!(
             "Processsing Block, Released Torrent Lock For {:?}",
@@ -278,7 +278,6 @@ where
     });
 
     if found_hash {
-        //Ok(block_result?)
         out_message
             .send(ODiskMessage::BlockProcessed(block))
             .expect("execute_process_block send message fail");
@@ -291,6 +290,34 @@ where
     }
 }
 
+async fn execute_check_torrent<F>(torrent_hash: InfoHash,
+    context: DiskManagerContext<F>,
+    out_message: mpsc::UnboundedSender<ODiskMessage>,
+)
+where
+    F: FileSystem,
+{
+
+    let mut result = false;
+    context.update_torrent_context(torrent_hash,|metainfo,state_checker|{
+          fill_checker_state(metainfo.info(),state_checker);
+          calculate_diff(metainfo.info(),state_checker,context.filesystem());
+          send_piece_diff(state_checker,torrent_hash,out_message.clone(),false);
+          result = true;
+    });
+
+    if result {
+        out_message.send(
+            ODiskMessage::CheckTorrented(torrent_hash)
+        ).expect("execute_check_torrent  CheckInfoHashed send mess fail");
+    }else {
+        out_message.send(
+            ODiskMessage::CheckTorrentError(torrent_hash)
+        ).expect("execute_check_torrent  CheckInfoHashed send mess fail");
+    }
+}
+
+
 
 
 async fn execute_piece_check<F>(
@@ -301,8 +328,11 @@ async fn execute_piece_check<F>(
     where
         F: FileSystem,
 {
-    println!("check info {:?}",token);
-
+    context.update_torrent_context(token,|metainfo,state_checker|{
+       // fill_checker_state(metainfo.info(),state_checker);
+        calculate_diff(metainfo.info(),state_checker,context.filesystem());
+        send_piece_diff(state_checker,token,out_message.clone(),false);
+    });
 }
 
 fn send_piece_diff(
@@ -324,4 +354,77 @@ fn send_piece_diff(
             .send(ODiskMessage::FoundGoodPiece(hash, index))
             .expect("bittorrent-protocol_disk: Failed To Flush Piece State Message");
     }
+}
+
+
+// 初始化片状态，存放到等待列表中
+/// Fill the PieceCheckerState with all piece messages for each file in our info dictionary.
+///
+/// This is done once when a torrent file is added to see if we have any good pieces that
+/// the caller can use to skip (if the torrent was partially downloaded before).
+fn fill_checker_state(info_dict: &Info, state_checker: &mut PieceStateChecker) -> io::Result<()> {
+    let piece_length = info_dict.piece_length() as u64;
+    let total_bytes: u64 = info_dict
+        .files()
+        .map(|file| file.length() as u64)
+        .sum();
+
+    let full_pieces = total_bytes / piece_length;
+    let last_piece_size = last_piece_size(info_dict);
+
+    for piece_index in 0..full_pieces {
+        state_checker
+            .add_pending_block(BlockMetadata::with_default_hash(
+                piece_index,
+                0,
+                piece_length as usize,
+            ));
+    }
+
+    // 最后片长度不等于标准片长，说明余一片要加进去
+    if last_piece_size != (piece_length as usize)  {
+        state_checker
+            .add_pending_block(BlockMetadata::with_default_hash(
+                full_pieces,
+                0,
+                last_piece_size as usize,
+            ));
+    }
+
+    Ok(())
+}
+
+// 校验片队列中每一个片的完成情况。
+/// Calculate the diff of old to new good/bad pieces and store them in the piece checker state
+/// to be retrieved by the caller.
+pub fn calculate_diff<T>(info_dict: &Info, state_checker: &mut PieceStateChecker,fs: T) -> io::Result<()>
+where  T: FileSystem
+{
+    let piece_length = info_dict.piece_length() as u64;
+    // TODO: Use Block Allocator
+    let mut piece_buffer = vec![0u8; piece_length as usize];
+
+    let piece_accessor = PieceAccessor::new(fs, info_dict);
+
+    //片的长度应该放在校验器里。
+    state_checker.run_with_whole_pieces(piece_length as usize, |message| {
+        log::trace!("check piece: {:?}",message.piece_index());
+        // 读取传递过来的块，判断它与片hash是否一样，除非传递过来的是块片，
+        // 这里可以直接改为读取 片的长度。
+        piece_accessor.read_piece(&mut piece_buffer[..message.block_length()], message)?;
+
+        let calculated_hash = InfoHash::from_bytes(&piece_buffer[..message.block_length()]);
+        let expected_hash = InfoHash::from_hash(
+            info_dict
+                .pieces()
+                .skip(message.piece_index() as usize)
+                .next()
+                .expect("bittorrent-protocol_peer: Piece Checker Failed To Retrieve Expected Hash"),
+        )
+            .expect("bittorrent-protocol_peer: Wrong Length Of Expected Hash Received");
+
+        Ok(calculated_hash == expected_hash)
+    })?;
+
+    Ok(())
 }
