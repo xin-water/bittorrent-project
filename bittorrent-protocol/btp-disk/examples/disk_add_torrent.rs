@@ -31,7 +31,7 @@ async fn main() {
     init_log();
     info!("start run .......");
 
-    let torrent_path = "bittorrent-protocol/btp-disk/examples_data/torrent/ubuntu-22.04.1-desktop-amd64.iso.torrent";
+    let torrent_path = "bittorrent-protocol/btp-disk/examples_data/torrent/music.torrent";
     let download_path = "bittorrent-protocol/btp-disk/examples_data/download";
 
     let mut torrent_bytes = Vec::new();
@@ -77,7 +77,7 @@ async fn main() {
                  info!("Torrent With Hash {:?} Successfully Check Torrent", hex::encode(hash));
                  info!(
                     "Torrent Has {:?} Good Pieces and {:?} Bad Pieces Out Of {:?} Total Pieces",
-                     good_pieces,good_pieces, total_pieces
+                     good_pieces,bad_pieces, total_pieces
                  );
                  break;
              }
