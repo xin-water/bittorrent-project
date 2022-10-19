@@ -333,10 +333,10 @@ where
         let rs= state_checker.run_with_whole_pieces(metainfo.info(),context.filesystem().clone(),out_message.clone());
 
         // 新校验算法，还未实现
-        //let rs= check_torrent(metainfo.info(),state_checker,out_message.clone(),context.filesystem());
+        // let rs= check_torrent(metainfo.info(),state_checker,out_message.clone(),context.filesystem());
 
         if let Ok(_) = rs {
-            send_piece_diff(state_checker,torrent_hash,out_message.clone(),false);
+           // send_piece_diff(state_checker,torrent_hash,out_message.clone(),false);
             result = true;
         }
 
@@ -364,7 +364,7 @@ async fn execute_piece_check<F>(
     context.update_torrent_context(token,|metainfo,state_checker|{
 
         if let Ok(_) = state_checker.run_with_whole_pieces(metainfo.info(),context.filesystem(),out_message.clone()){
-            send_piece_diff(state_checker,token,out_message.clone(),false);
+            //send_piece_diff(state_checker,token,out_message.clone(),false);
         }
 
     });
