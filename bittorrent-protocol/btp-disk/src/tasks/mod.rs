@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use crate::error::{
     BlockError, BlockErrorKind, BlockResult, TorrentError, TorrentErrorKind, TorrentResult,
@@ -41,6 +42,7 @@ pub(crate) struct TaskHandler<F>{
     context: DiskManagerContext<F>,
     //timer: Arc<Mutex<Timer<InfoHash>>>,
     timer: Timer<InfoHash>,
+    active_checker: HashMap<InfoHash,Timeout>,
     in_message: mpsc::Receiver<IDiskMessage>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
 }
@@ -55,6 +57,7 @@ impl<F: FileSystem> TaskHandler<F>{
             in_message: in_message,
            // timer: Arc::new(Mutex::new(Timer::new())),
             timer:Timer::new(),
+            active_checker: HashMap::new(),
             out_message: out_message,
         }
     }
@@ -69,7 +72,8 @@ impl<F: FileSystem> TaskHandler<F>{
         //         (*t).schedule_in(Duration::from_secs(2), [0u8; 20].into());
         //     }
         // }
-        self.timer.schedule_in(Duration::from_secs(2), [0u8; 20].into());
+        let timeout = self.timer.schedule_in(Duration::from_secs(2), [0u8; 20].into());
+        self.active_checker.insert([0u8; 20].into(),timeout);
         while  self.is_run {
           self.run_one().await;
         }
@@ -100,12 +104,24 @@ impl<F: FileSystem> TaskHandler<F>{
         }
     }
 
-   async fn message_in_ex(&self,msg: IDiskMessage){
+   async fn message_in_ex(&mut self, msg: IDiskMessage){
         match msg {
             IDiskMessage::AddTorrent(metainfo) => {
+                // 注册一个检查片的定时信号
+                // 为啥不在执行内部注册？ 因为我想让任务在单独协程执行，timer加锁太麻烦，还会阻塞线程
+                // 以后可以用其他计时器库，基于通道发送 计时信息
+                // 当前的一个问题是：种子完成以后怎么取消
+                let timeout = self.timer.schedule_in(Duration::from_millis(1800),metainfo.info().info_hash());
+                self.active_checker.insert(metainfo.info().info_hash(),timeout);
+
                 execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()).await
             }
             IDiskMessage::RemoveTorrent(hash) =>  {
+
+                if let Some(timeout) = self.active_checker.remove(&hash){
+                    self.timer.cancel(timeout);
+                }
+
                 execute_remove_torrent(hash, self.context.clone(),self.out_message.clone()).await
             },
             IDiskMessage::SyncTorrent(hash) =>  {
@@ -121,11 +137,17 @@ impl<F: FileSystem> TaskHandler<F>{
                 execute_check_torrent(info, self.context.clone(), self.out_message.clone()).await
             }
         };
-    }
+   }
 
-    async  fn timeout_ex(&mut self,token: InfoHash){
+   async  fn timeout_ex(&mut self,token: InfoHash){
+
+        let timeout = self.timer.schedule_in(Duration::from_millis(1800),token);
+        self.active_checker.insert(token,timeout);
+
+        //使用定时任务来做piece检查，如果收到一个块就检查一次，太浪费cpu了，效率不高。
         execute_piece_check(token, self.context.clone(), self.out_message.clone()).await
-    }
+
+   }
 }
 
 
@@ -317,9 +339,6 @@ where
     }
 }
 
-
-
-
 async fn execute_piece_check<F>(
     token: InfoHash,
     context: DiskManagerContext<F>,
@@ -339,13 +358,13 @@ fn send_piece_diff(
     checker_state: &mut PieceStateChecker,
     hash: InfoHash,
     blocking_sender: mpsc::UnboundedSender<ODiskMessage>,
-    ignore_bad: bool,
+    include_bad: bool,
 ) {
     let index_vec= checker_state.run_with_diff(move |piece_state|{
-        match (piece_state, ignore_bad) {
+        match (piece_state, include_bad) {
             (PieceState::Good(index), _) =>true ,
-            (PieceState::Bad(index), false) => true,
-            (PieceState::Bad(_), true) => false,
+            (PieceState::Bad(_), true) => true,
+            (PieceState::Bad(index), false) => false,
         }
     });
 
