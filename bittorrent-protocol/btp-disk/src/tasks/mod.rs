@@ -164,7 +164,7 @@ where
     let info_hash = metadata.info_hash();
 
     let mut access_result = Ok(());
-    let found_hash = context.update_torrent_context(info_hash, |metainfo_file, _| {
+    let found_hash = context.use_torrent_context(info_hash, |metainfo_file, _| {
         let piece_accessor = PieceAccessor::new(context.filesystem(), metainfo_file.info());
 
         // Read The Piece In From The Filesystem

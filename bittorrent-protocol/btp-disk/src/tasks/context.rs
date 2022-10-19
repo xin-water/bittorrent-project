@@ -16,7 +16,7 @@ use btp_util::bt::InfoHash;
 // 线程直接卡死，异步没了意义
 // 加了双重锁，削弱阻塞范围，针对单个torrent对象的可以使用异步，反正只会锁住它自己
 pub struct DiskManagerContext<F> {
-    torrent_contexts: Arc<RwLock<HashMap<InfoHash, Mutex<MetainfoState>>>>,
+    torrent_contexts: Arc<RwLock<HashMap<InfoHash, RwLock<MetainfoState>>>>,
     //out: Sender<ODiskMessage>,
     fs: Arc<F>,
 }
@@ -61,7 +61,7 @@ impl<F> DiskManagerContext<F> {
         let hash_not_exists = !write_torrents.contains_key(&hash);
 
         if hash_not_exists {
-            write_torrents.insert(hash, Mutex::new(MetainfoState::new(file, state)));
+            write_torrents.insert(hash, RwLock::new(MetainfoState::new(file, state)));
         }
 
         hash_not_exists
@@ -78,11 +78,34 @@ impl<F> DiskManagerContext<F> {
         match read_torrents.get(&hash) {
             Some(state) => {
                 let mut lock_state = state
-                    .lock()
+                    .write()
                     .expect("bittorrent-protocol_disk: DiskManagerContext::update_torrent Failed To Lock State");
                 let deref_state = &mut *lock_state;
 
                 call(&deref_state.file, &mut deref_state.state);
+
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn use_torrent_context<C>(&self, hash: InfoHash, call: C) -> bool
+        where
+            C: FnOnce(&Metainfo, &PieceStateChecker),
+    {
+        let read_torrents = self.torrent_contexts.read().expect(
+            "bittorrent-protocol_disk: DiskManagerContext::use_torrent_context Failed To Read Torrent",
+        );
+
+        match read_torrents.get(&hash) {
+            Some(state) => {
+                let mut lock_state = state
+                    .read()
+                    .expect("bittorrent-protocol_disk: DiskManagerContext::use_torrent_context Failed To Read State");
+                let deref_state = & *lock_state;
+
+                call(&deref_state.file, &deref_state.state);
 
                 true
             }
