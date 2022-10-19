@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-btp-util        = { version="0.1.1", path = "../btp-util" }
+btp-util        = { version="0.2.0", path = "../btp-util" }
 nom             = "3.0"
 byteorder       = "1.1"
 chrono          = "0.4"

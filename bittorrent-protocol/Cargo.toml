@@ -12,12 +12,12 @@ license     = "LGPL3"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-btp-util        = { version="0.1.1", path = "./btp-util" }
+btp-util        = { version="0.2.0", path = "./btp-util" }
 btp-bencode     = { version="0.1.0", path = "./btp-bencode" }
 btp-metainfo    = { version="0.1.0", path = "./btp-metainfo" }
 btp-magnet      = { version="0.0.1", path = "./btp-magnet" }
 btp-disk        = { version="0.1.0", path = "./btp-disk" }
-btp-dht         = { version="0.5.0", path = "./btp-dht" }
+btp-dht         = { version="0.5.1", path = "./btp-dht" }
 btp-htracker    = { version="0.0.1", path = "./btp-htracker" }
 btp-utracker    = { version="0.1.0", path = "./btp-utracker" }
 btp-lsd         = { version="0.0.1", path = "./btp-lsd" }
