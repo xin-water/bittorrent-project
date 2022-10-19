@@ -37,6 +37,7 @@ pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs
 pub(crate) struct TaskHandler<F>{
     is_run: bool,
     context: DiskManagerContext<F>,
+    //timer: Arc<Mutex<Timer<InfoHash>>>,
     timer: Timer<InfoHash>,
     in_message: mpsc::Receiver<IDiskMessage>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
@@ -50,7 +51,8 @@ impl<F: FileSystem> TaskHandler<F>{
             is_run :true,
             context:  DiskManagerContext::new(fs),
             in_message: in_message,
-            timer: Timer::new(),
+           // timer: Arc::new(Mutex::new(Timer::new())),
+            timer:Timer::new(),
             out_message: out_message,
         }
     }
@@ -60,9 +62,12 @@ impl<F: FileSystem> TaskHandler<F>{
     }
 
     pub(crate) async fn run_task(mut self){
-        {
-            self.timer.schedule_in(Duration::from_secs(2), [0u8; 20].into());
-        }
+        // {
+        //     if let Ok(mut t) = self.timer.lock(){
+        //         (*t).schedule_in(Duration::from_secs(2), [0u8; 20].into());
+        //     }
+        // }
+        self.timer.schedule_in(Duration::from_secs(2), [0u8; 20].into());
         while  self.is_run {
           self.run_one().await;
         }
@@ -77,13 +82,18 @@ impl<F: FileSystem> TaskHandler<F>{
                 } else {
                     self.shutdown()
                 }
-            }
+           }
 
+           // 这里要开新协程，则timer需要Arc,Mutex,这里要先拿锁再next.
+           // token = async {
+           //      let mut timer = self.timer.lock().unwrap();
+           //      (*timer).next().await
+           //  }
            token = self.timer.next(), if !self.timer.is_empty() => {
                 let token = token.unwrap();
-                log::trace!("timeout_rx: {:?}",&token);
                 self.timeout_ex(token).await
-            }
+           }
+
 
         }
     }
