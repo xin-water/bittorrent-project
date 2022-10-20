@@ -329,7 +329,7 @@ where
         // 问题1：太慢了，读的次数太多，不如一次读连续n片，然后一起校验
         // 问题2：一个协程太慢，尝试开多个协程
         // 问题3：校验后没有发送 片状态，没有校验进度。
-        fill_checker_state(metainfo.info(),state_checker);
+        state_checker.fill_checker_state(metainfo.info());
         let rs= state_checker.run_with_whole_pieces(metainfo.info(),context.filesystem().clone(),out_message.clone());
 
         // 新校验算法，还未实现
@@ -392,42 +392,7 @@ fn send_piece_diff(
 }
 
 
-// 初始化片状态，存放到等待列表中
-/// Fill the PieceCheckerState with all piece messages for each file in our info dictionary.
-///
-/// This is done once when a torrent file is added to see if we have any good pieces that
-/// the caller can use to skip (if the torrent was partially downloaded before).
-fn fill_checker_state(info_dict: &Info, state_checker: &mut PieceStateChecker) -> io::Result<()> {
-    let piece_length = info_dict.piece_length() as u64;
-    let total_bytes: u64 = info_dict
-        .files()
-        .map(|file| file.length() as u64)
-        .sum();
 
-    let full_pieces = total_bytes / piece_length;
-    let last_piece_size = last_piece_size(info_dict);
-
-    for piece_index in 0..full_pieces {
-        state_checker
-            .add_pending_block(BlockMetadata::with_default_hash(
-                piece_index,
-                0,
-                piece_length as usize,
-            ));
-    }
-
-    // 最后片长度不等于标准片长，说明余一片要加进去
-    if last_piece_size != (piece_length as usize)  {
-        state_checker
-            .add_pending_block(BlockMetadata::with_default_hash(
-                full_pieces,
-                0,
-                last_piece_size as usize,
-            ));
-    }
-
-    Ok(())
-}
 
 
 pub(crate) fn check_torrent<F>(info: &Info, checker: &mut PieceStateChecker, msg_out: mpsc::UnboundedSender<ODiskMessage>,fs: F)->io::Result<()>

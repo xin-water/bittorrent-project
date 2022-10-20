@@ -181,6 +181,43 @@ impl PieceStateChecker {
         result
     }
 
+    // 初始化片状态，存放到等待列表中
+    /// Fill the PieceCheckerState with all piece messages for each file in our info dictionary.
+    ///
+    /// This is done once when a torrent file is added to see if we have any good pieces that
+    /// the caller can use to skip (if the torrent was partially downloaded before).
+    pub(crate) fn fill_checker_state(&mut self, info_dict: &Info) -> io::Result<()> {
+        let piece_length = info_dict.piece_length() as u64;
+        let total_bytes: u64 = info_dict
+            .files()
+            .map(|file| file.length() as u64)
+            .sum();
+
+        let full_pieces = total_bytes / piece_length;
+        let last_piece_size = last_piece_size(info_dict);
+
+        for piece_index in 0..full_pieces {
+            self
+                .add_pending_block(BlockMetadata::with_default_hash(
+                    piece_index,
+                    0,
+                    piece_length as usize,
+                ));
+        }
+
+        // 最后片长度不等于标准片长，说明余一片要加进去
+        if last_piece_size != (piece_length as usize)  {
+            self
+                .add_pending_block(BlockMetadata::with_default_hash(
+                    full_pieces,
+                    0,
+                    last_piece_size as usize,
+                ));
+        }
+
+        Ok(())
+    }
+
     // 校验片队列中每一个片的完成情况。
     /// Pass any pieces that have not been identified as OldGood into the callback which determines
     /// if the piece is good or bad so it can be marked as NewGood or NewBad.
