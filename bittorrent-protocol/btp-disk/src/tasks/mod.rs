@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use crate::error::{
     BlockError, BlockErrorKind, BlockResult, TorrentError, TorrentErrorKind, TorrentResult,
@@ -42,7 +42,7 @@ pub(crate) struct TaskHandler<F>{
     context: DiskManagerContext<F>,
     //timer: Arc<Mutex<Timer<InfoHash>>>,
     timer: Timer<InfoHash>,
-    active_checker: HashMap<InfoHash,Timeout>,
+    download_active: HashSet<InfoHash>,
     in_message: mpsc::Receiver<IDiskMessage>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
 }
@@ -57,7 +57,7 @@ impl<F: FileSystem> TaskHandler<F>{
             in_message: in_message,
            // timer: Arc::new(Mutex::new(Timer::new())),
             timer:Timer::new(),
-            active_checker: HashMap::new(),
+            download_active: HashSet::new(),
             out_message: out_message,
         }
     }
@@ -73,7 +73,7 @@ impl<F: FileSystem> TaskHandler<F>{
         //     }
         // }
         let timeout = self.timer.schedule_in(Duration::from_secs(2), [0u8; 20].into());
-        self.active_checker.insert([0u8; 20].into(),timeout);
+        self.download_active.insert([0u8; 20].into());
         while  self.is_run {
           self.run_one().await;
         }
@@ -111,17 +111,14 @@ impl<F: FileSystem> TaskHandler<F>{
                 // 为啥不在执行内部注册？ 因为我想让任务在单独协程执行，timer加锁太麻烦，还会阻塞线程
                 // 以后可以用其他计时器库，基于通道发送 计时信息
                 // 当前的一个问题是：种子完成以后怎么取消
-                let timeout = self.timer.schedule_in(Duration::from_millis(1800),metainfo.info().info_hash());
-                self.active_checker.insert(metainfo.info().info_hash(),timeout);
+                self.timer.schedule_in(Duration::from_millis(1800),metainfo.info().info_hash());
+                self.download_active.insert(metainfo.info().info_hash());
 
                 execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()).await
             }
             IDiskMessage::RemoveTorrent(hash) =>  {
 
-                if let Some(timeout) = self.active_checker.remove(&hash){
-                    self.timer.cancel(timeout);
-                }
-
+                self.download_active.remove(&hash);
                 execute_remove_torrent(hash, self.context.clone(),self.out_message.clone()).await
             },
             IDiskMessage::SyncTorrent(hash) =>  {
@@ -141,11 +138,12 @@ impl<F: FileSystem> TaskHandler<F>{
 
    async  fn timeout_ex(&mut self,token: InfoHash){
 
-        let timeout = self.timer.schedule_in(Duration::from_millis(1800),token);
-        self.active_checker.insert(token,timeout);
-
-        //使用定时任务来做piece检查，如果收到一个块就检查一次，太浪费cpu了，效率不高。
-        execute_piece_check(token, self.context.clone(), self.out_message.clone()).await
+        // 只有下载活跃的才进行校验，下载完的就不用校验了。
+        if self.download_active.get(&token).is_some(){
+            self.timer.schedule_in(Duration::from_millis(1800),token);
+            //使用定时任务来做piece检查，如果收到一个块就检查一次，太浪费cpu了，效率不高。
+            execute_piece_check(token, self.context.clone(), self.out_message.clone()).await
+        }
 
    }
 }
