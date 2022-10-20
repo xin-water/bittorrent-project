@@ -123,6 +123,8 @@ pub struct PieceStateChecker {
     pending_blocks: HashMap<u64, Vec<BlockMetadata>>,
     total_blocks: usize,
     last_block_size: usize,
+    is_complete: bool,
+    complete_num: usize,
 }
 
 #[derive(PartialEq, Eq, Hash,Clone)]
@@ -151,6 +153,8 @@ impl PieceStateChecker {
             pending_blocks: HashMap::new(),
             total_blocks: total_blocks,
             last_block_size: last_block_size,
+            is_complete: false,
+            complete_num: 0,
         }
     }
 

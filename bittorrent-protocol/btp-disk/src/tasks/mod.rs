@@ -136,9 +136,7 @@ impl<F: FileSystem> TaskHandler<F>{
         match msg {
             IDiskMessage::AddTorrent(metainfo) => {
                 // 注册一个检查片的定时信号
-                // 为啥不在执行内部注册？ 因为我想让任务在单独协程执行，timer加锁太麻烦，还会阻塞线程
-                // 以后可以用其他计时器库，基于通道发送 计时信息
-                // 当前的一个问题是：种子完成以后怎么取消
+                // 可以通过内部控制通道传递定时注册，暂时够用，以后再说。
                 self.timer.schedule_in(Duration::from_millis(1800),metainfo.info().info_hash());
                 self.download_active.insert(metainfo.info().info_hash());
 
@@ -159,7 +157,7 @@ impl<F: FileSystem> TaskHandler<F>{
                 execute_process_block(block, self.context.clone(), self.out_message.clone()).await
             }
             IDiskMessage::CheckTorrent(info) => {
-                execute_check_torrent(info, self.context.clone(), self.out_message.clone()).await
+                execute_check_torrent(info, self.context.clone(), self.out_message.clone(), self.command_send.clone()).await
             }
         };
    }
@@ -170,7 +168,7 @@ impl<F: FileSystem> TaskHandler<F>{
         if self.download_active.get(&token).is_some(){
             self.timer.schedule_in(Duration::from_millis(1800),token);
             //使用定时任务来做piece检查，如果收到一个块就检查一次，太浪费cpu了，效率不高。
-            execute_piece_check(token, self.context.clone(), self.out_message.clone()).await
+            execute_piece_check(token, self.context.clone(), self.out_message.clone(),self.command_send.clone()).await
         }
 
    }
@@ -359,6 +357,8 @@ where
 async fn execute_check_torrent<F>(torrent_hash: InfoHash,
     context: DiskManagerContext<F>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
+    command_send: mpsc::UnboundedSender<Task>,
+
 )
 where
     F: FileSystem,
@@ -401,6 +401,8 @@ async fn execute_piece_check<F>(
     token: InfoHash,
     context: DiskManagerContext<F>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
+    command_send: mpsc::UnboundedSender<Task>,
+
 )
     where
         F: FileSystem,
