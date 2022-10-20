@@ -36,6 +36,8 @@ pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs
     return (in_message_tx,out_message_rx);
 
 }
+
+#[derive(Debug)]
 pub(crate) enum Task{
     RemoveDownload(InfoHash),
     ShutDown
@@ -427,14 +429,14 @@ async fn execute_piece_check<F>(
     });
 
     // 检查是否完整，完整移除
-    context.use_torrent_context(torrent_hash,|_,state|{
+    context.use_torrent_context(token,|_,state|{
         if state.is_complete(){
             command_send.
-                send(Task::RemoveDownload(torrent_hash))
+                send(Task::RemoveDownload(token))
                 .expect(" RemoveDownload send fail");
         }
 
-        out_message.send(ODiskMessage::DownloadPace(torrent_hash,state.complete_pace()));
+        out_message.send(ODiskMessage::DownloadPace(token,state.complete_pace()));
 
     });
 }

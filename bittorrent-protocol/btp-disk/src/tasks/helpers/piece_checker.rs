@@ -161,18 +161,18 @@ impl PieceStateChecker {
     }
 
     /// Add a pending piece block to the current pending blocks.
-    pub fn is_complete(& self) -> bool{
+    pub fn is_complete(&self) -> bool{
         self.is_complete
     }
 
     /// Add a pending piece block to the current pending blocks.
-    pub fn complete_pace(& self) -> f64{
+    pub fn complete_pace(&self) -> f64{
         self.complete_num as f64 /self.total_pieces as f64
     }
 
     /// Add a pending piece block to the current pending blocks.
     pub fn check_pace(& self) -> f64{
-        self.check_num as f64 /self.total_pieces as f64
+    self.check_num as f64 /self.total_pieces as f64
     }
 
     /// Add a pending piece block to the current pending blocks.
@@ -248,7 +248,7 @@ impl PieceStateChecker {
     {
         self.merge_pieces();
 
-        let new_states = &mut self.new_states;
+       // let new_states = &mut self.new_states;
         let old_states = &self.old_states;
 
         let total_blocks = self.total_pieces;
@@ -275,10 +275,10 @@ impl PieceStateChecker {
             let message = &messages[0];
             log::trace!("check piece: {:?}",message.piece_index());
 
-            // 读取片，因为该块已经聚合，跟片一样大了。
-            piece_accessor.read_piece(&mut piece_buffer[..], message)?;
+            // 读取片，因为该块已经聚合，跟片一样大了, 前面的片长度都一样，但最后一片长度不定，所以还是用片上记录的长度。
+            piece_accessor.read_piece(&mut piece_buffer[..message.block_length()], message)?;
 
-            let calculated_hash = InfoHash::from_bytes(&piece_buffer[..]);
+            let calculated_hash = InfoHash::from_bytes(&piece_buffer[..message.block_length()]);
             let expected_hash = InfoHash::from_hash(
                 info_dict
                     .pieces()
@@ -289,14 +289,14 @@ impl PieceStateChecker {
                 .expect("bittorrent-protocol_peer: Wrong Length Of Expected Hash Received");
 
             if calculated_hash == expected_hash {
-                new_states.push(PieceState::Good(messages[0].piece_index()));
+                self.new_states.push(PieceState::Good(messages[0].piece_index()));
                 self.complete_num += 1;
                 msg_out.send(ODiskMessage::FoundGoodPiece(
                     info_dict.info_hash(),
                     messages[0].piece_index())
                 ).expect("run_with_whole_pieces FoundGoodPiece message fail ")
             } else {
-                new_states.push(PieceState::Bad(messages[0].piece_index()));
+                self.new_states.push(PieceState::Bad(messages[0].piece_index()));
                 msg_out.send(ODiskMessage::FoundBadPiece(
                     info_dict.info_hash(),
                     messages[0].piece_index())
@@ -304,15 +304,21 @@ impl PieceStateChecker {
             }
 
             self.check_num += 1;
+
+            // 不允许借用？什么鬼，上面那些修改都能借用，这里就不能借用了？奇怪的借用规则
+            // let pace= self.check_pace();
+            let pace = self.check_num as f64/ self.total_pieces as f64;
+
             msg_out
-                .send(ODiskMessage::CheckPace(info_dict.info_hash(),self.check_pace()))
+                .send(ODiskMessage::CheckPace(info_dict.info_hash(),pace))
                 .expect("CheckPace msg fail");
+
             // TODO: Should do a partial clear if user callback errors.
             messages.clear();
         }
 
         // 判断文件是否完整了，
-        if self.complete_num = self.total_pieces {
+        if self.complete_num == self.total_pieces {
             self.is_complete = true;
         }
 

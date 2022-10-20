@@ -62,7 +62,7 @@ async fn main() {
     while let Some(msg) = disk_recv.recv().await {
 
          match msg {
-            ODiskMessage::FoundGoodPiece(_, _) => {
+             ODiskMessage::FoundGoodPiece(_, _) => {
                 good_pieces += 1;
                 debug!("{:?}: msg: FoundGoodPiece ", Local::now().naive_local());
              }
@@ -70,7 +70,13 @@ async fn main() {
                  bad_pieces += 1;
                  debug!("{:?}: msg: FoundBadPiece ", Local::now().naive_local());
              }
-            ODiskMessage::TorrentAdded(hash) => {
+             ODiskMessage::CheckPace(_, pace) => {
+                 info!("校验进度{:?}", pace);
+             }
+             ODiskMessage::DownloadPace(_, pace) => {
+                 info!("下载进度{:?}", pace);
+             }
+             ODiskMessage::TorrentAdded(hash) => {
                 info!("Torrent With Hash {:?} Successfully Added", hex::encode(hash));
              }
              ODiskMessage::CheckTorrented(hash) => {
@@ -81,7 +87,7 @@ async fn main() {
                  );
                  break;
              }
-            unexpected @ _ => panic!("Unexpected ODiskMessage {:?}", unexpected),
+             unexpected @ _ => panic!("Unexpected ODiskMessage {:?}", unexpected),
          }
     }
 }
@@ -101,7 +107,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Info),
         )
         .unwrap();
 
