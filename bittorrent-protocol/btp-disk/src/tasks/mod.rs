@@ -36,6 +36,11 @@ pub(crate)  fn start_disk_task<F>(sink_capacity: usize,stream_capacity:usize, fs
     return (in_message_tx,out_message_rx);
 
 }
+pub(crate) enum Task{
+    RemoveDownload(InfoHash),
+    ShutDown
+}
+
 
 pub(crate) struct TaskHandler<F>{
     is_run: bool,
@@ -45,11 +50,19 @@ pub(crate) struct TaskHandler<F>{
     download_active: HashSet<InfoHash>,
     in_message: mpsc::Receiver<IDiskMessage>,
     out_message: mpsc::UnboundedSender<ODiskMessage>,
+    command_rx: mpsc::UnboundedReceiver<Task>,
+    command_send: mpsc::UnboundedSender<Task>,
 }
 
 impl<F: FileSystem> TaskHandler<F>{
     pub(crate) fn new(in_message: mpsc::Receiver<IDiskMessage>,
                       out_message: mpsc::UnboundedSender<ODiskMessage>,fs: F) ->Self{
+
+        // 内部控制消息，
+        // 用锁实现在读写数据时太繁琐，
+        // 用通道实现，多个参数，
+        // 用通道好一点，而且对象属性越多性价比越高。
+        let (tx,rx) = mpsc::unbounded_channel();
 
         TaskHandler{
             is_run :true,
@@ -59,11 +72,17 @@ impl<F: FileSystem> TaskHandler<F>{
             timer:Timer::new(),
             download_active: HashSet::new(),
             out_message: out_message,
+            command_rx: rx,
+            command_send: tx,
         }
     }
 
     fn shutdown(&mut self){
         self.is_run = false;
+    }
+
+    fn remove_download_active(&mut self, info: &InfoHash ){
+        self.download_active.remove(info);
     }
 
     pub(crate) async fn run_task(mut self){
@@ -98,6 +117,15 @@ impl<F: FileSystem> TaskHandler<F>{
            token = self.timer.next(), if !self.timer.is_empty() => {
                 let token = token.unwrap();
                 self.timeout_ex(token).await
+           }
+
+
+            command  = self.command_rx.recv() => {
+                if let Some(cmd) = command {
+                    self.command_ex(cmd).await
+                } else {
+                    self.shutdown()
+                }
            }
 
 
@@ -146,6 +174,19 @@ impl<F: FileSystem> TaskHandler<F>{
         }
 
    }
+
+    async fn command_ex(&mut self, cmd: Task){
+        match cmd {
+            Task::ShutDown =>self.shutdown(),
+
+            Task::RemoveDownload(ref info_hash) =>{
+                 self.remove_download_active(info_hash);
+            }
+        }
+    }
+
+
+
 }
 
 
