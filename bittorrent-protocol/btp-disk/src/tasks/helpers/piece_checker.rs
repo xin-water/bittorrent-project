@@ -25,10 +25,10 @@ where
 {
     /// Create the initial PieceCheckerState for the PieceChecker.
     pub fn init_state_checker(fs: F, info_dict: &'a Info) -> TorrentResult<PieceStateChecker> {
-        let total_blocks = info_dict.pieces().count();
+        let total_pieces = info_dict.pieces().count();
         let last_piece_size = last_piece_size(info_dict);
 
-        let mut state_checker = PieceStateChecker::new(total_blocks, last_piece_size);
+        let mut state_checker = PieceStateChecker::new(total_pieces, last_piece_size);
         {
             let mut piece_checker_make = PieceCheckerMake::with_state_checker(fs, info_dict, &mut state_checker);
 
@@ -121,10 +121,11 @@ pub struct PieceStateChecker {
     new_states: Vec<PieceState>,
     old_states: HashSet<PieceState>,
     pending_blocks: HashMap<u64, Vec<BlockMetadata>>,
-    total_blocks: usize,
+    total_pieces: usize,
     last_block_size: usize,
     is_complete: bool,
     complete_num: usize,
+    check_num:usize,
 }
 
 #[derive(PartialEq, Eq, Hash,Clone)]
@@ -146,16 +147,32 @@ impl PieceState{
 
 impl PieceStateChecker {
     /// Create a new PieceCheckerState.
-    pub fn new(total_blocks: usize, last_block_size: usize) -> PieceStateChecker {
+    pub fn new(total_pieces: usize, last_block_size: usize) -> PieceStateChecker {
         PieceStateChecker {
             new_states: Vec::new(),
             old_states: HashSet::new(),
             pending_blocks: HashMap::new(),
-            total_blocks: total_blocks,
+            total_pieces: total_pieces,
             last_block_size: last_block_size,
             is_complete: false,
             complete_num: 0,
+            check_num: 0,
         }
+    }
+
+    /// Add a pending piece block to the current pending blocks.
+    pub fn is_complete(& self) -> bool{
+        self.is_complete
+    }
+
+    /// Add a pending piece block to the current pending blocks.
+    pub fn complete_pace(& self) -> f64{
+        self.complete_num as f64 /self.total_pieces as f64
+    }
+
+    /// Add a pending piece block to the current pending blocks.
+    pub fn check_pace(& self) -> f64{
+        self.check_num as f64 /self.total_pieces as f64
     }
 
     /// Add a pending piece block to the current pending blocks.
@@ -234,7 +251,7 @@ impl PieceStateChecker {
         let new_states = &mut self.new_states;
         let old_states = &self.old_states;
 
-        let total_blocks = self.total_blocks;
+        let total_blocks = self.total_pieces;
         let last_block_size = self.last_block_size;
 
         let piece_accessor = PieceAccessor::new(fs, info_dict);
@@ -273,6 +290,7 @@ impl PieceStateChecker {
 
             if calculated_hash == expected_hash {
                 new_states.push(PieceState::Good(messages[0].piece_index()));
+                self.complete_num += 1;
                 msg_out.send(ODiskMessage::FoundGoodPiece(
                     info_dict.info_hash(),
                     messages[0].piece_index())
@@ -285,8 +303,17 @@ impl PieceStateChecker {
                 ).expect("run_with_whole_pieces FoundGoodPiece message fail ")
             }
 
+            self.check_num += 1;
+            msg_out
+                .send(ODiskMessage::CheckPace(info_dict.info_hash(),self.check_pace()))
+                .expect("CheckPace msg fail");
             // TODO: Should do a partial clear if user callback errors.
             messages.clear();
+        }
+
+        // 判断文件是否完整了，
+        if self.complete_num = self.total_pieces {
+            self.is_complete = true;
         }
 
         Ok(())

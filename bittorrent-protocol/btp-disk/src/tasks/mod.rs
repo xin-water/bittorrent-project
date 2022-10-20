@@ -386,6 +386,17 @@ where
 
     });
 
+    // 检查是否完整，完整移除
+    context.use_torrent_context(torrent_hash,|_,state|{
+        if state.is_complete(){
+            command_send.
+                send(Task::RemoveDownload(torrent_hash))
+                .expect(" RemoveDownload send fail");
+        }
+        // 发送下载进度
+        out_message.send(ODiskMessage::DownloadPace(torrent_hash,state.complete_pace()));
+    });
+
     if result {
         out_message.send(
             ODiskMessage::CheckTorrented(torrent_hash)
@@ -412,6 +423,18 @@ async fn execute_piece_check<F>(
         if let Ok(_) = state_checker.run_with_whole_pieces(metainfo.info(),context.filesystem(),out_message.clone()){
             //send_piece_diff(state_checker,token,out_message.clone(),false);
         }
+
+    });
+
+    // 检查是否完整，完整移除
+    context.use_torrent_context(torrent_hash,|_,state|{
+        if state.is_complete(){
+            command_send.
+                send(Task::RemoveDownload(torrent_hash))
+                .expect(" RemoveDownload send fail");
+        }
+
+        out_message.send(ODiskMessage::DownloadPace(torrent_hash,state.complete_pace()));
 
     });
 }

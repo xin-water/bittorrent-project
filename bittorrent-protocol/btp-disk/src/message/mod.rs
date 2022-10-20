@@ -57,6 +57,9 @@ pub enum ODiskMessage {
     /// Message indicating that the given block has been processed.
     BlockProcessed(Block),
     // check infohashed
+    DownloadPace(InfoHash,f64),
+    CheckPace(InfoHash,f64),
+    // check infohashed
     CheckTorrented(InfoHash),
     /// Error occurring from a `AddTorrent` or `RemoveTorrent` message.
     TorrentError(InfoHash, TorrentError),
