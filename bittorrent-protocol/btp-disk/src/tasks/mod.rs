@@ -56,7 +56,7 @@ pub(crate) struct TaskHandler<F>{
     command_send: mpsc::UnboundedSender<Task>,
 }
 
-impl<F: FileSystem> TaskHandler<F>{
+impl<F: FileSystem + Send + Sync +'static> TaskHandler<F>{
     pub(crate) fn new(in_message: mpsc::Receiver<IDiskMessage>,
                       out_message: mpsc::UnboundedSender<ODiskMessage>,fs: F) ->Self{
 
@@ -142,24 +142,24 @@ impl<F: FileSystem> TaskHandler<F>{
                 self.timer.schedule_in(Duration::from_millis(1800),metainfo.info().info_hash());
                 self.download_active.insert(metainfo.info().info_hash());
 
-                execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()).await
+                task::spawn(execute_add_torrent(metainfo, self.context.clone(), self.out_message.clone()));
             }
             IDiskMessage::RemoveTorrent(hash) =>  {
 
                 self.download_active.remove(&hash);
-                execute_remove_torrent(hash, self.context.clone(),self.out_message.clone()).await
+                task::spawn(execute_remove_torrent(hash, self.context.clone(),self.out_message.clone()));
             },
             IDiskMessage::SyncTorrent(hash) =>  {
-                execute_sync_torrent(hash, self.context.clone(),self.out_message.clone()).await
+                task::spawn(execute_sync_torrent(hash, self.context.clone(),self.out_message.clone()));
             },
             IDiskMessage::LoadBlock(block) =>   {
-                execute_load_block(block, self.context.clone(),self.out_message.clone()).await
+                task::spawn(execute_load_block(block, self.context.clone(),self.out_message.clone()));
             },
             IDiskMessage::ProcessBlock(block) => {
-                execute_process_block(block, self.context.clone(), self.out_message.clone()).await
+                task::spawn(execute_process_block(block, self.context.clone(), self.out_message.clone()));
             }
             IDiskMessage::CheckTorrent(info) => {
-                execute_check_torrent(info, self.context.clone(), self.out_message.clone(), self.command_send.clone()).await
+                task::spawn(execute_check_torrent(info, self.context.clone(), self.out_message.clone(), self.command_send.clone()));
             }
         };
    }
@@ -170,7 +170,7 @@ impl<F: FileSystem> TaskHandler<F>{
         if self.download_active.get(&token).is_some(){
             self.timer.schedule_in(Duration::from_millis(1800),token);
             //使用定时任务来做piece检查，如果收到一个块就检查一次，太浪费cpu了，效率不高。
-            execute_piece_check(token, self.context.clone(), self.out_message.clone(),self.command_send.clone()).await
+           task::spawn( execute_piece_check(token, self.context.clone(), self.out_message.clone(),self.command_send.clone()));
         }
 
    }

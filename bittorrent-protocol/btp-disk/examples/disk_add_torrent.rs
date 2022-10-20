@@ -52,7 +52,6 @@ async fn main() {
     let total_pieces = info.pieces().count();
     info!("start send msg ");
     disk_send.send(IDiskMessage::AddTorrent(metainfo_file)).await.expect("send message fail");
-    disk_send.send(IDiskMessage::CheckTorrent(info_hash)).await.expect("send message fail");
 
     info!("end send msg ");
 
@@ -78,6 +77,7 @@ async fn main() {
              }
              ODiskMessage::TorrentAdded(hash) => {
                 info!("Torrent With Hash {:?} Successfully Added", hex::encode(hash));
+                 disk_send.send(IDiskMessage::CheckTorrent(info_hash)).await.expect("send message fail");
              }
              ODiskMessage::CheckTorrented(hash) => {
                  info!("Torrent With Hash {:?} Successfully Check Torrent", hex::encode(hash));
