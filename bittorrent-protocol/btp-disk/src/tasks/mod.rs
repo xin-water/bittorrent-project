@@ -277,7 +277,10 @@ where
 
     let mut found_hash = false;
 
-    context.update_torrent_context(info_hash, |metainfo_file, mut checker_state| {
+
+    //  一块一块的存，磁盘访问太频繁，后面应该增加缓存。存缓存里。
+    //  存数据时用读锁，存完以后用写锁修改状态
+    context.use_torrent_context(info_hash, |metainfo_file, mut checker_state| {
         info!(
             "Processsing Block, Acquired Torrent Lock For {:?}",
             metainfo_file.info().info_hash()
@@ -287,9 +290,6 @@ where
 
         // Write Out Piece Out To The Filesystem And Recalculate The Diff
         if let Ok(_) =piece_accessor.write_piece(&block, &metadata){
-            checker_state.add_pending_block(metadata);
-            // calculate_diff(metainfo_file.info(),&mut checker_state,context.filesystem())
-            //send_piece_diff(&mut checker_state, info_hash, out_message.clone(), false);
             found_hash= true;
         }
 
@@ -300,6 +300,11 @@ where
     });
 
     if found_hash {
+
+        context.update_torrent_context(info_hash,|_,checker_state|{
+            checker_state.add_pending_block(metadata);
+        });
+
         out_message
             .send(ODiskMessage::BlockProcessed(block))
             .expect("execute_process_block send message fail");
