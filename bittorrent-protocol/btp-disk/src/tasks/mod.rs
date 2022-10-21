@@ -393,7 +393,7 @@ where
         if state.is_complete(){
             command_send.
                 send(Task::RemoveDownload(torrent_hash))
-                .expect(" RemoveDownload send fail");
+                .expect("execute_check_torrent RemoveDownload send fail");
         }
         // 发送下载进度
         out_message.send(ODiskMessage::DownloadPace(torrent_hash,state.complete_pace()));
@@ -433,7 +433,7 @@ async fn execute_piece_check<F>(
         if state.is_complete(){
             command_send.
                 send(Task::RemoveDownload(token))
-                .expect(" RemoveDownload send fail");
+                .expect(" execute_piece_check RemoveDownload send fail");
         }
 
         out_message.send(ODiskMessage::DownloadPace(token,state.complete_pace()));
