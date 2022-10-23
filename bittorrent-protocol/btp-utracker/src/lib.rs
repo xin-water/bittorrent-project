@@ -20,7 +20,7 @@ pub mod contact;
 pub mod error;
 pub mod option;
 pub mod scrape;
-
+pub mod socket;
 mod client;
 mod server;
 
