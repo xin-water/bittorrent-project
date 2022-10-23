@@ -229,7 +229,6 @@ where
     /// Process a request to be sent to the given address and associated with the given token.
     pub fn send_request<'a>(
         &mut self,
-        // provider: &mut Provider<'a, ClientDispatcher<H>>,
         addr: SocketAddr,
         token: ClientToken,
         request: ClientRequest,
@@ -260,7 +259,8 @@ where
         };
 
         let conn_timer = if let Some(conn_timer) = self.active_requests.remove(&token) {
-            if conn_timer.message_params().0 == addr {
+            let socket_addr = conn_timer.message_params().0;
+            if socket_addr == addr {
                 conn_timer
             } else {
                 return;

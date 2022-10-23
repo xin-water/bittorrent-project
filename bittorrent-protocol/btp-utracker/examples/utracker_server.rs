@@ -31,6 +31,10 @@ async fn main(){
 
     // 向tracker服务器发起注册请求
     let hash = InfoHash::from_hex("3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
+
+    //不能直接用 "0.0.0.0:3501" 作为目标地址。因为返回的响应地址是具体的。
+    let server_addr = "127.0.0.1:3501".parse().unwrap();
+
     let send_token = client
         .request(
             server_addr,
