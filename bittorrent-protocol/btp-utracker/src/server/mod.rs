@@ -1,9 +1,9 @@
 use std::io::{self};
 use std::net::SocketAddr;
+use tokio::sync::mpsc;
 
 use crate::server::dispatcher::DispatchMessage;
 use crate::ServerHandler;
-use umio::external::Sender;
 
 mod dispatcher;
 pub mod handler;
@@ -12,16 +12,20 @@ pub mod handler;
 ///
 /// Server will shutdown on drop.
 pub struct TrackerServer {
-    send: Sender<DispatchMessage>,
+    send: mpsc::UnboundedSender<DispatchMessage>,
 }
 
 impl TrackerServer {
     /// Run a new TrackerServer.
-    pub fn run<H>(bind: SocketAddr, handler: H) -> io::Result<TrackerServer>
+    pub async fn run<H>(bind: SocketAddr, handler: H) -> io::Result<TrackerServer>
     where
         H: ServerHandler + 'static,
     {
-        dispatcher::create_dispatcher(bind, handler).map(|send| TrackerServer { send: send })
+        dispatcher::create_dispatcher(bind, handler)
+            .await
+            .map(|send|
+                TrackerServer { send: send }
+            )
     }
 }
 
