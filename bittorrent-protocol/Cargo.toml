@@ -13,7 +13,7 @@ license     = "LGPL3"
 
 [dependencies]
 btp-util        = { version="0.2.1", path = "./btp-util" }
-btp-bencode     = { version="0.1.0", path = "./btp-bencode" }
+btp-bencode     = { version="0.1.1", path = "./btp-bencode" }
 btp-metainfo    = { version="0.1.0", path = "./btp-metainfo" }
 btp-magnet      = { version="0.0.1", path = "./btp-magnet" }
 btp-disk        = { version="0.3.0", path = "./btp-disk" }
