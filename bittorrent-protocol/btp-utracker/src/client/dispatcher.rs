@@ -2,13 +2,18 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io::{self, Cursor};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread::{self};
 
 use chrono::{DateTime, Duration, Utc};
 use nom::IResult;
 use rand::{self};
-use umio::external::{self, Timeout};
-use umio::{Dispatcher, ELoopBuilder, Provider};
+use futures::StreamExt;
+use tokio::{select, sync::mpsc, task};
+use tokio::net::UdpSocket;
+// use umio::external::{self, Timeout};
+// use umio::{Dispatcher, ELoopBuilder, Provider};
+use btp_util::timer::{Timeout, Timer};
 
 use crate::announce::{AnnounceRequest, DesiredPeers, SourceIP};
 use crate::client::RequestLimiter;
@@ -20,6 +25,7 @@ use crate::{
     request, ClientError, ClientMetadata, ClientRequest, ClientResponse, ClientResult, ClientToken,
     Handshaker,
 };
+use crate::socket::UtSocket;
 
 const EXPECTED_PACKET_LENGTH: usize = 1500;
 
@@ -33,6 +39,7 @@ enum DispatchTimeout {
 }
 
 /// Internal dispatch message for clients.
+#[derive(Debug)]
 pub enum DispatchMessage {
     Request(SocketAddr, ClientToken, ClientRequest),
     StartTimer,
@@ -42,39 +49,62 @@ pub enum DispatchMessage {
 /// Create a new background dispatcher to execute request and send responses back.
 ///
 /// Assumes msg_capacity is less than usize::max_value().
-pub fn create_dispatcher<H>(
+pub async fn create_dispatcher<H>(
     bind: SocketAddr,
     handshaker: H,
     msg_capacity: usize,
     limiter: RequestLimiter,
-) -> io::Result<external::Sender<DispatchMessage>>
+) -> io::Result<mpsc::Sender<DispatchMessage>>
 where
     H: Handshaker + 'static,
     H::Metadata: From<ClientMetadata>,
 {
     // Timer capacity is plus one for the cache cleanup timer
-    let builder = ELoopBuilder::new()
-        .channel_capacity(msg_capacity)
-        .timer_capacity(msg_capacity + 1)
-        .bind_address(bind)
-        .buffer_length(EXPECTED_PACKET_LENGTH);
+    // let builder = ELoopBuilder::new()
+    //     .channel_capacity(msg_capacity)
+    //     .timer_capacity(msg_capacity + 1)
+    //     .bind_address(bind)
+    //     .buffer_length(EXPECTED_PACKET_LENGTH);
 
-    let mut eloop = builder.build()?;
-    let channel = eloop.channel();
+    // let mut eloop = builder.build()?;
 
-    let dispatch = ClientDispatcher::new(handshaker, bind, limiter);
 
-    thread::spawn(move || {
-        eloop
-            .run(dispatch)
-            .expect("bittorrent-protocol_utracker: ELoop Shutdown Unexpectedly...");
+    // let channel = eloop.channel();
+    let (command_tx, command_rx) = mpsc::channel::<DispatchMessage>(100);
+
+    let udp_socket = UdpSocket::bind(bind).await?;
+    let socket_arc = Arc::new(UtSocket::new(udp_socket).unwrap());
+
+    // 专门用一个协程发送数据，避免 数据处理中心 阻塞。
+    let send_socket =socket_arc.clone();
+    let (message_tx, mut message_rx)=mpsc::unbounded_channel::<(Vec<u8>, SocketAddr)>();
+    //专门用一个协程发送数据，避免 数据处理中心 阻塞。
+    task::spawn(async move {
+
+        log::info!("消息发送协程已启动");
+        while let Some((buffer,addr)) = message_rx.recv().await{
+            send_socket.send(&buffer,addr).await;
+        }
+        log::warn!("消息发送协程已退出");
+
     });
 
-    channel
+    let dispatch = ClientDispatcher::new(handshaker, bind, limiter,socket_arc,command_rx,message_tx);
+
+    // thread::spawn(move || {
+    //     eloop
+    //         .run(dispatch)
+    //         .expect("bittorrent-protocol_utracker: ELoop Shutdown Unexpectedly...");
+    // });
+
+    task::spawn(dispatch.run_task());
+
+    command_tx
         .send(DispatchMessage::StartTimer)
+        .await
         .expect("bittorrent-protocol_utracker: ELoop Failed To Start Connect ID Timer...");
 
-    Ok(channel)
+    Ok(command_tx)
 }
 
 //----------------------------------------------------------------------------//
@@ -89,6 +119,12 @@ where
     active_requests: HashMap<ClientToken, ConnectTimer>,
     id_cache: ConnectIdCache,
     limiter: RequestLimiter,
+    is_run: bool,
+    // response_in: mpsc::UnboundedReceiver<(Vec<u8>,SocketAddr)>,
+    response_in: Arc<UtSocket>,
+    command_in: mpsc::Receiver<DispatchMessage>,
+    message_send:  mpsc::UnboundedSender<(Vec<u8>, SocketAddr)>,
+    timer: Timer<DispatchTimeout>,
 }
 
 impl<H> ClientDispatcher<H>
@@ -97,18 +133,109 @@ where
     H::Metadata: From<ClientMetadata>,
 {
     /// Create a new ClientDispatcher.
-    pub fn new(handshaker: H, bind: SocketAddr, limiter: RequestLimiter) -> ClientDispatcher<H> {
+    pub fn new(handshaker: H,
+               bind: SocketAddr,
+               limiter: RequestLimiter,
+               response_in: Arc<UtSocket>,
+               command_in: mpsc::Receiver<DispatchMessage>,
+               message_send: mpsc::UnboundedSender<(Vec<u8>,SocketAddr)>,) -> ClientDispatcher<H> {
         ClientDispatcher {
             handshaker: handshaker,
             bound_addr: bind,
             active_requests: HashMap::new(),
             id_cache: ConnectIdCache::new(),
             limiter: limiter,
+            is_run: true,
+            command_in,
+            response_in,
+            message_send: message_send,
+            timer: Timer::new(),
         }
     }
 
+
+    pub(crate) async fn run_task(mut self){
+            while  self.is_run {
+                self.run_one().await;
+            }
+
+    }
+
+
+    async fn run_one(&mut self){
+        select! {
+
+            msg  = self.response_in.recv() => {
+                if let Ok((message,addr)) = msg {
+                    self.response_in_handler(&message,addr).await
+                } else {
+                    self.shutdown()
+                }
+           }
+
+           cmd  = self.command_in.recv() => {
+                if let Some(command) = cmd {
+                    self.command_in_handler(command).await
+                } else {
+                    self.shutdown()
+                }
+           }
+
+           token = self.timer.next(), if !self.timer.is_empty() => {
+                let token = token.unwrap();
+                self.timeout_handler(token).await
+           }
+
+
+           //  command  = self.command_rx.recv() => {
+           //      if let Some(cmd) = command {
+           //          self.command_ex(cmd).await
+           //      } else {
+           //          self.shutdown()
+           //      }
+           // }
+        }
+    }
+
+    async fn response_in_handler(&mut self, message : &Vec<u8>, addr: SocketAddr){
+        let response = match TrackerResponse::from_bytes(message) {
+            IResult::Done(_, rsp) => rsp,
+            _ => return, // TODO: Add Logging
+        };
+
+        self.recv_response(addr, response);
+    }
+
+    async fn command_in_handler(&mut self, message : DispatchMessage){
+        match message {
+            DispatchMessage::Request(addr, token, req_type) => {
+                self.send_request(addr, token, req_type);
+            }
+            DispatchMessage::StartTimer => self.timeout_handler(DispatchTimeout::CleanUp).await,
+            DispatchMessage::Shutdown => self.shutdown(),
+        }
+    }
+
+    async fn timeout_handler(&mut self, timeout : DispatchTimeout){
+        match timeout {
+            DispatchTimeout::Connect(token) => self.process_request(token, true),
+            DispatchTimeout::CleanUp => {
+                self.id_cache.clean_expired();
+
+                // provider
+                //     .set_timeout(
+                //         DispatchTimeout::CleanUp,
+                //         CONNECTION_ID_VALID_DURATION_MILLIS as u64,
+                //     )
+                //     .expect("bittorrent-protocol_utracker: Failed To Restart Connect Id Cleanup Timer");
+
+                self.timer.schedule_in(std::time::Duration::from_secs(CONNECTION_ID_VALID_DURATION_MILLIS as u64 ),DispatchTimeout::CleanUp);
+            }
+        };
+    }
+
     /// Shutdown the current dispatcher, notifying all pending requests.
-    pub fn shutdown<'a>(&mut self, provider: &mut Provider<'a, ClientDispatcher<H>>) {
+    pub fn shutdown<'a>(&mut self) {
         // Notify all active requests with the appropriate error
         for token_index in 0..self.active_requests.len() {
             let next_token = *self
@@ -123,7 +250,7 @@ where
         // TODO: Clear active timeouts
         self.active_requests.clear();
 
-        provider.shutdown();
+        self.is_run = false;
     }
 
     /// Finish a request by sending the result back to the client.
@@ -137,7 +264,7 @@ where
     /// Process a request to be sent to the given address and associated with the given token.
     pub fn send_request<'a>(
         &mut self,
-        provider: &mut Provider<'a, ClientDispatcher<H>>,
+        // provider: &mut Provider<'a, ClientDispatcher<H>>,
         addr: SocketAddr,
         token: ClientToken,
         request: ClientRequest,
@@ -154,13 +281,12 @@ where
         self.active_requests
             .insert(token, ConnectTimer::new(addr, request));
 
-        self.process_request(provider, token, false);
+        self.process_request(token, false);
     }
 
     /// Process a response received from some tracker and match it up against our sent requests.
     pub fn recv_response<'a, 'b>(
         &mut self,
-        provider: &mut Provider<'a, ClientDispatcher<H>>,
         addr: SocketAddr,
         response: TrackerResponse<'b>,
     ) {
@@ -178,18 +304,21 @@ where
             return;
         }; // TODO: Add Logging (Server Gave Us Invalid Transaction Id)
 
-        provider.clear_timeout(
-            conn_timer
-                .timeout_id()
-                .expect("bittorrent-protocol_utracker: Failed To Clear Request Timeout"),
-        );
+        // provider.clear_timeout(
+        //     conn_timer
+        //         .timeout_id()
+        //         .expect("bittorrent-protocol_utracker: Failed To Clear Request Timeout"),
+        // );
+
+        self.timer.cancel(conn_timer.timeout_id.unwrap());
+
 
         // Check if the response requires us to update the connection timer
         if let &ResponseType::Connect(id) = response.response_type() {
             self.id_cache.put(addr, id);
 
             self.active_requests.insert(token, conn_timer);
-            self.process_request(provider, token, false);
+            self.process_request(token, false);
         } else {
             // Match the request type against the response type and update our client
             match (conn_timer.message_params().1, response.response_type()) {
@@ -219,7 +348,7 @@ where
     /// If this call is the result of a timeout, that will decide whether to cancel the request or not.
     fn process_request<'a>(
         &mut self,
-        provider: &mut Provider<'a, ClientDispatcher<H>>,
+        // provider: &mut Provider<'a, ClientDispatcher<H>>,
         token: ClientToken,
         timed_out: bool,
     ) {
@@ -275,27 +404,45 @@ where
         };
         let tracker_request = TrackerRequest::new(conn_id, token.token, request_type);
 
+
         // Try to write the request out to the server
+
         let mut write_success = false;
-        provider.outgoing(|bytes| {
-            let mut writer = Cursor::new(bytes);
+        // provider.outgoing(|bytes| {
+        //     let mut writer = Cursor::new(bytes);
+        //     write_success = tracker_request.write_bytes(&mut writer).is_ok();
+        //
+        //     if write_success {
+        //         Some((writer.position() as usize, addr))
+        //     } else {
+        //         None
+        //     }
+        // });
+        {
+            let mut buffer= vec![0_u8;1500];
+            let mut writer = Cursor::new(&mut buffer);
             write_success = tracker_request.write_bytes(&mut writer).is_ok();
 
             if write_success {
-                Some((writer.position() as usize, addr))
-            } else {
-                None
+                 let posi = writer.position() as usize;
+                self.message_send.send((buffer[0..posi].to_vec(), addr)).expect("msg send fail");
+
             }
-        });
+        }
+
 
         // If message was not sent (too long to fit) then end the request
         if !write_success {
             self.notify_client(token, Err(ClientError::MaxLength));
         } else {
+            // conn_timer.set_timeout_id(
+            //     provider
+            //         .set_timeout(DispatchTimeout::Connect(token), next_timeout)
+            //         .expect("bittorrent-protocol_utracker: Failed To Set Timeout For Request"),
+            // );
+
             conn_timer.set_timeout_id(
-                provider
-                    .set_timeout(DispatchTimeout::Connect(token), next_timeout)
-                    .expect("bittorrent-protocol_utracker: Failed To Set Timeout For Request"),
+                self.timer.schedule_in(std::time::Duration::from_secs(next_timeout ),DispatchTimeout::Connect(token))
             );
 
             self.active_requests.insert(token, conn_timer);
@@ -303,49 +450,49 @@ where
     }
 }
 
-impl<H> Dispatcher for ClientDispatcher<H>
-where
-    H: Handshaker,
-    H::Metadata: From<ClientMetadata>,
-{
-    type Timeout = DispatchTimeout;
-    type Message = DispatchMessage;
-
-    fn incoming<'a>(&mut self, mut provider: Provider<'a, Self>, message: &[u8], addr: SocketAddr) {
-        let response = match TrackerResponse::from_bytes(message) {
-            IResult::Done(_, rsp) => rsp,
-            _ => return, // TODO: Add Logging
-        };
-
-        self.recv_response(&mut provider, addr, response);
-    }
-
-    fn notify<'a>(&mut self, mut provider: Provider<'a, Self>, message: DispatchMessage) {
-        match message {
-            DispatchMessage::Request(addr, token, req_type) => {
-                self.send_request(&mut provider, addr, token, req_type);
-            }
-            DispatchMessage::StartTimer => self.timeout(provider, DispatchTimeout::CleanUp),
-            DispatchMessage::Shutdown => self.shutdown(&mut provider),
-        }
-    }
-
-    fn timeout<'a>(&mut self, mut provider: Provider<'a, Self>, timeout: DispatchTimeout) {
-        match timeout {
-            DispatchTimeout::Connect(token) => self.process_request(&mut provider, token, true),
-            DispatchTimeout::CleanUp => {
-                self.id_cache.clean_expired();
-
-                provider
-                    .set_timeout(
-                        DispatchTimeout::CleanUp,
-                        CONNECTION_ID_VALID_DURATION_MILLIS as u64,
-                    )
-                    .expect("bittorrent-protocol_utracker: Failed To Restart Connect Id Cleanup Timer");
-            }
-        };
-    }
-}
+// impl<H> Dispatcher for ClientDispatcher<H>
+// where
+//     H: Handshaker,
+//     H::Metadata: From<ClientMetadata>,
+// {
+//     type Timeout = DispatchTimeout;
+//     type Message = DispatchMessage;
+//
+//     fn incoming<'a>(&mut self, mut provider: Provider<'a, Self>, message: &[u8], addr: SocketAddr) {
+//         let response = match TrackerResponse::from_bytes(message) {
+//             IResult::Done(_, rsp) => rsp,
+//             _ => return, // TODO: Add Logging
+//         };
+//
+//         self.recv_response(&mut provider, addr, response);
+//     }
+//
+//     fn notify<'a>(&mut self, mut provider: Provider<'a, Self>, message: DispatchMessage) {
+//         match message {
+//             DispatchMessage::Request(addr, token, req_type) => {
+//                 self.send_request(&mut provider, addr, token, req_type);
+//             }
+//             DispatchMessage::StartTimer => self.timeout(provider, DispatchTimeout::CleanUp),
+//             DispatchMessage::Shutdown => self.shutdown(&mut provider),
+//         }
+//     }
+//
+//     fn timeout<'a>(&mut self, mut provider: Provider<'a, Self>, timeout: DispatchTimeout) {
+//         match timeout {
+//             DispatchTimeout::Connect(token) => self.process_request(&mut provider, token, true),
+//             DispatchTimeout::CleanUp => {
+//                 self.id_cache.clean_expired();
+//
+//                 provider
+//                     .set_timeout(
+//                         DispatchTimeout::CleanUp,
+//                         CONNECTION_ID_VALID_DURATION_MILLIS as u64,
+//                     )
+//                     .expect("bittorrent-protocol_utracker: Failed To Restart Connect Id Cleanup Timer");
+//             }
+//         };
+//     }
+// }
 
 //----------------------------------------------------------------------------//
 

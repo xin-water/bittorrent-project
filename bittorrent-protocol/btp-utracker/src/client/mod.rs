@@ -2,6 +2,7 @@ use std::io::{self};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use btp_util::bt::InfoHash;
 use btp_util::trans::old::TIDGenerator;
@@ -9,7 +10,6 @@ use crate::announce::{AnnounceResponse, ClientState};
 use crate::client::dispatcher::DispatchMessage;
 use crate::scrape::ScrapeResponse;
 use crate::ClientResult;
-use umio::external::Sender;
 
 mod dispatcher;
 pub mod handshake;
@@ -95,7 +95,7 @@ impl ClientResponse {
 ///
 /// Client will shutdown on drop.
 pub struct TrackerClient {
-    send: Sender<DispatchMessage>,
+    send: mpsc::Sender<DispatchMessage>,
     // We are in charge of incrementing this, background worker is in charge of decrementing
     limiter: RequestLimiter,
     generator: TokenGenerator,
@@ -103,18 +103,18 @@ pub struct TrackerClient {
 
 impl TrackerClient {
     /// Create a new TrackerClient.
-    pub fn new<H>(bind: SocketAddr, handshaker: H) -> io::Result<TrackerClient>
+    pub async fn new<H>(bind: SocketAddr, handshaker: H) -> io::Result<TrackerClient>
     where
         H: Handshaker + 'static,
         H::Metadata: From<ClientMetadata>,
     {
-        TrackerClient::with_capacity(bind, handshaker, DEFAULT_CAPACITY)
+        TrackerClient::with_capacity(bind, handshaker, DEFAULT_CAPACITY).await
     }
 
     /// Create a new TrackerClient with the given message capacity.
     ///
     /// Panics if capacity == usize::max_value().
-    pub fn with_capacity<H>(
+    pub async fn with_capacity<H>(
         bind: SocketAddr,
         handshaker: H,
         capacity: usize,
@@ -132,8 +132,9 @@ impl TrackerClient {
         // Limit the capacity of messages (channel capacity - 1)
         let limiter = RequestLimiter::new(capacity);
 
-        dispatcher::create_dispatcher(bind, handshaker, chan_capacity, limiter.clone()).map(
-            |chan| TrackerClient {
+        dispatcher::create_dispatcher(bind, handshaker, chan_capacity, limiter.clone())
+            .await
+            .map(|chan| TrackerClient {
                 send: chan,
                 limiter: limiter,
                 generator: TokenGenerator::new(),
@@ -144,11 +145,12 @@ impl TrackerClient {
     /// Execute an asynchronous request to the given tracker.
     ///
     /// If the maximum number of requests are currently in progress, return None.
-    pub fn request(&mut self, addr: SocketAddr, request: ClientRequest) -> Option<ClientToken> {
+    pub async fn request(&mut self, addr: SocketAddr, request: ClientRequest) -> Option<ClientToken> {
         if self.limiter.can_initiate() {
             let token = self.generator.generate();
             self.send
                 .send(DispatchMessage::Request(addr, token, request))
+                .await
                 .expect("bittorrent-protocol_utracker: Failed To Send Client Request Message...");
 
             Some(token)
@@ -160,9 +162,10 @@ impl TrackerClient {
 
 impl Drop for TrackerClient {
     fn drop(&mut self) {
-        self.send
-            .send(DispatchMessage::Shutdown)
-            .expect("bittorrent-protocol_utracker: Failed To Send Client Shutdown Message...");
+        // self.send
+        //     .send(DispatchMessage::Shutdown)
+        //     .await
+        //     .expect("bittorrent-protocol_utracker: Failed To Send Client Shutdown Message...");
     }
 }
 
