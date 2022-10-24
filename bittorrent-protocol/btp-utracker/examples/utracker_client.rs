@@ -12,9 +12,9 @@ use btp_utracker::announce::{AnnounceEvent, ClientState};
 async fn main(){
 
     // 启动tracker client
-    let (send, recv) = mpsc::channel();
-    let mock_handshaker = MockHandshaker::new(send);
-    let mut client = TrackerClient::new("0.0.0.0:4501".parse().unwrap(), mock_handshaker.clone())
+    //let (send, recv) = mpsc::channel();
+    //let mock_handshaker = MockHandshaker::new(send);
+    let mut client = TrackerClient::new("0.0.0.0:4501".parse().unwrap(),[0_u8;20].into(),6969)
             .await
             .unwrap();
 
@@ -49,61 +49,5 @@ async fn main(){
     println!("response peers:{:?}",response.peers().iter().count());
     for peer in response.peers().iter() {
         println!("response socket:{:?}",peer);
-    }
-
-    mock_handshaker.connects_received(|connects| {
-        println!("connects len:{:?}",connects.len());
-    });
-
-
-}
-
-
-
-
-
-
-
-#[derive(Clone)]
-struct MockHandshaker {
-    send: Sender<ClientMetadata>,
-    connects: Arc<Mutex<Vec<SocketAddr>>>,
-}
-
-impl MockHandshaker {
-    pub fn new(send: Sender<ClientMetadata>) -> MockHandshaker {
-        MockHandshaker {
-            send: send,
-            connects: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub fn connects_received<F>(&self, callback: F)
-        where
-            F: FnOnce(&[SocketAddr]),
-    {
-        let locked = self.connects.lock().unwrap();
-
-        callback(&*locked);
-    }
-}
-
-impl Handshaker for MockHandshaker {
-    type Metadata = ClientMetadata;
-
-    fn id(&self) -> PeerId {
-        [0u8; 20].into()
-    }
-
-    fn port(&self) -> u16 {
-        6969
-    }
-
-    fn connect(&mut self, _: Option<PeerId>, _: InfoHash, addr: SocketAddr) {
-        self.connects.lock().unwrap().push(addr);
-    }
-
-    fn metadata(&mut self, data: ClientMetadata) {
-        self.send.send(data).unwrap();
     }
 }

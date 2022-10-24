@@ -12,6 +12,7 @@ use futures::StreamExt;
 use tokio::{select, sync::mpsc, task};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::UnboundedSender;
+use btp_util::bt::InfoHash;
 // use umio::external::{self, Timeout};
 // use umio::{Dispatcher, ELoopBuilder, Provider};
 use btp_util::timer::{Timeout, Timer};
@@ -50,15 +51,13 @@ pub enum DispatchMessage {
 /// Create a new background dispatcher to execute request and send responses back.
 ///
 /// Assumes msg_capacity is less than usize::max_value().
-pub async fn create_dispatcher<H>(
+pub async fn create_dispatcher(
     bind: SocketAddr,
-    handshaker: H,
+    peer_id: InfoHash,
+    Announce_port: u16,
     msg_capacity: usize,
     limiter: RequestLimiter,
 ) -> io::Result<mpsc::Sender<DispatchMessage>>
-where
-    H: Handshaker + 'static,
-    H::Metadata: From<ClientMetadata>,
 {
 
     let udp_socket = UdpSocket::bind(bind).await?;
@@ -78,7 +77,7 @@ where
     });
 
     let (command_tx, command_rx) = mpsc::channel::<DispatchMessage>(100);
-    let dispatch = ClientDispatcher::new(handshaker, bind, limiter,socket_arc,command_rx,message_tx);
+    let dispatch = ClientDispatcher::new(bind,peer_id,Announce_port, limiter,socket_arc,command_rx,message_tx);
 
 
     task::spawn(dispatch.run_task());
@@ -94,12 +93,10 @@ where
 //----------------------------------------------------------------------------//
 
 /// Dispatcher that executes requests asynchronously.
-struct ClientDispatcher<H>
-where
-    H: Handshaker,
-{
-    handshaker: H,
+struct ClientDispatcher {
     bound_addr: SocketAddr,
+    peer_id: InfoHash,
+    Announce_port: u16,
     active_requests: HashMap<ClientToken, ConnectTimer>,
     id_cache: ConnectIdCache,
     limiter: RequestLimiter,
@@ -110,21 +107,21 @@ where
     timer: Timer<DispatchTimeout>,
 }
 
-impl<H> ClientDispatcher<H>
-where
-    H: Handshaker,
-    H::Metadata: From<ClientMetadata>,
+impl ClientDispatcher
 {
     /// Create a new ClientDispatcher.
-    pub fn new(handshaker: H,
+    pub fn new(
                bind: SocketAddr,
+               peer_id: InfoHash,
+               Announce_port:u16,
                limiter: RequestLimiter,
                response_in: Arc<UtSocket>,
                command_in: mpsc::Receiver<DispatchMessage>,
-               message_send: mpsc::UnboundedSender<(Vec<u8>,SocketAddr)>,) -> ClientDispatcher<H> {
+               message_send: mpsc::UnboundedSender<(Vec<u8>,SocketAddr)>,) -> ClientDispatcher {
         ClientDispatcher {
-            handshaker: handshaker,
             bound_addr: bind,
+            peer_id: peer_id,
+            Announce_port: Announce_port,
             active_requests: HashMap::new(),
             id_cache: ConnectIdCache::new(),
             limiter: limiter,
@@ -203,15 +200,21 @@ where
     /// Shutdown the current dispatcher, notifying all pending requests.
     pub fn shutdown<'a>(&mut self) {
         // Notify all active requests with the appropriate error
-        for token_index in 0..self.active_requests.len() {
-            let next_token = *self
-                .active_requests
-                .keys()
-                .skip(token_index)
-                .next()
-                .unwrap();
 
-            self.notify_client(next_token, Err(ClientError::ClientShutdown));
+        // for token_index in 0..self.active_requests.len() {
+        //     let next_token = *self
+        //         .active_requests
+        //         //.keys()
+        //         .skip(token_index)
+        //         .next()
+        //         .unwrap();
+        //
+        //     self.notify_client(next_token, Err(ClientError::ClientShutdown));
+        // }
+
+        for (token,timeout) in self.active_requests.iter() {
+
+            timeout.tx.send(ClientMetadata::new(*token,Err(ClientError::ClientShutdown))).expect("ClientShutdown send fail");
         }
         // TODO: Clear active timeouts
         self.active_requests.clear();
@@ -220,12 +223,12 @@ where
     }
 
     /// Finish a request by sending the result back to the client.
-    pub fn notify_client(&mut self, token: ClientToken, result: ClientResult<ClientResponse>) {
-        self.handshaker
-            .metadata(ClientMetadata::new(token, result).into());
-
-        self.limiter.acknowledge();
-    }
+    // pub fn notify_client(&mut self, token: ClientToken, result: ClientResult<ClientResponse>) {
+    //     self.handshaker
+    //         .metadata(ClientMetadata::new(token, result).into());
+    //
+    //     self.limiter.acknowledge();
+    // }
 
     /// Process a request to be sent to the given address and associated with the given token.
     pub fn send_request<'a>(
@@ -238,8 +241,11 @@ where
         // Check for IP version mismatch between source addr and dest addr
         match (self.bound_addr, addr) {
             (SocketAddr::V4(_), SocketAddr::V6(_)) | (SocketAddr::V6(_), SocketAddr::V4(_)) => {
-                self.notify_client(token, Err(ClientError::IPVersionMismatch));
-
+                //self.notify_client(token, Err(ClientError::IPVersionMismatch));
+                tx.send(ClientMetadata::new(
+                    token,
+                    Err(ClientError::IPVersionMismatch)
+                )).expect("Err IPVersionMismatch send fail");
                 return;
             }
             _ => (),
@@ -352,12 +358,12 @@ where
                     id,
                     RequestType::Announce(AnnounceRequest::new(
                         hash,
-                        self.handshaker.id(),
+                        self.peer_id,
                         state,
                         source_ip,
                         key,
                         DesiredPeers::Default,
-                        self.handshaker.port(),
+                        self.Announce_port,
                         AnnounceOptions::new(),
                     )),
                 )

@@ -13,8 +13,8 @@ use crate::scrape::ScrapeResponse;
 use crate::ClientResult;
 
 mod dispatcher;
-pub mod handshake;
-pub use self::handshake::Handshaker;
+//pub mod handshake;
+//pub use self::handshake::Handshaker;
 
 pub mod error;
 
@@ -104,25 +104,20 @@ pub struct TrackerClient {
 
 impl TrackerClient {
     /// Create a new TrackerClient.
-    pub async fn new<H>(bind: SocketAddr, handshaker: H) -> io::Result<TrackerClient>
-    where
-        H: Handshaker + 'static,
-        H::Metadata: From<ClientMetadata>,
+    pub async fn new(bind: SocketAddr, peer_id: InfoHash, Announce_port: u16) -> io::Result<TrackerClient>
     {
-        TrackerClient::with_capacity(bind, handshaker, DEFAULT_CAPACITY).await
+        TrackerClient::with_capacity(bind,peer_id, Announce_port, DEFAULT_CAPACITY).await
     }
 
     /// Create a new TrackerClient with the given message capacity.
     ///
     /// Panics if capacity == usize::max_value().
-    pub async fn with_capacity<H>(
+    pub async fn with_capacity(
         bind: SocketAddr,
-        handshaker: H,
+        peer_id: InfoHash,
+        Announce_port:u16,
         capacity: usize,
     ) -> io::Result<TrackerClient>
-    where
-        H: Handshaker + 'static,
-        H::Metadata: From<ClientMetadata>,
     {
         // Need channel capacity to be 1 more in case channel is saturated and client
         // is dropped so shutdown message can get through in the worst case
@@ -133,7 +128,7 @@ impl TrackerClient {
         // Limit the capacity of messages (channel capacity - 1)
         let limiter = RequestLimiter::new(capacity);
 
-        dispatcher::create_dispatcher(bind, handshaker, chan_capacity, limiter.clone())
+        dispatcher::create_dispatcher(bind,peer_id, Announce_port, chan_capacity, limiter.clone())
             .await
             .map(|chan| TrackerClient {
                 send: chan,
