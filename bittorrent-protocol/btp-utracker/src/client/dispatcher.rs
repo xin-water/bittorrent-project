@@ -24,8 +24,7 @@ use crate::request::{RequestType, TrackerRequest};
 use crate::response::{ResponseType, TrackerResponse};
 use crate::scrape::ScrapeRequest;
 use crate::{
-    request, ClientError, ClientMetadata, ClientRequest, ClientResponse, ClientResult, ClientToken,
-    Handshaker,
+    request, ClientError, ClientMetadata, ClientRequest, ClientResponse, ClientResult, ClientToken
 };
 use crate::socket::UtSocket;
 

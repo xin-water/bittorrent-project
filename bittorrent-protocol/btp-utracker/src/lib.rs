@@ -25,7 +25,7 @@ mod client;
 mod server;
 
 pub use client::error::{ClientError, ClientResult};
-pub use client::{ClientMetadata, ClientRequest, ClientResponse, ClientToken, TrackerClient,Handshaker};
+pub use client::{ClientMetadata, ClientRequest, ClientResponse, ClientToken, TrackerClient};
 
 pub use server::handler::{ServerHandler, ServerResult};
 pub use server::TrackerServer;
