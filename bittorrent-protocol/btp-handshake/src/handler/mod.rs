@@ -27,8 +27,9 @@ pub fn loop_handler<M, C, H, R>(mut stream:M, context: C, mut handler: H, sink: 
 where
     M: Stream + 'static + Send,
     C: 'static + Send,
-    H: FnMut(M::Item, &C) -> Result<Option<R>,()> + 'static + Send ,
     R: 'static + Send ,
+    H: FnMut(M::Item, &C) -> Result<Option<R>,()> + 'static + Send ,
+
 {
     std::thread::spawn(move||{
         loop {
