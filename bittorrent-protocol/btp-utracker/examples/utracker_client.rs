@@ -12,8 +12,6 @@ use btp_utracker::announce::{AnnounceEvent, ClientState};
 async fn main(){
 
     // 启动tracker client
-    //let (send, recv) = mpsc::channel();
-    //let mock_handshaker = MockHandshaker::new(send);
     let mut client = TrackerClient::new("0.0.0.0:4501".parse().unwrap(),[0_u8;20].into(),6969)
             .await
             .unwrap();
