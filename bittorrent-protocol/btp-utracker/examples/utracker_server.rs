@@ -23,9 +23,7 @@ async fn main(){
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 启动tracker client
-    let (send, recv) = mpsc::channel();
-    let mock_handshaker = MockHandshaker::new(send);
-    let mut client = TrackerClient::new("0.0.0.0:4501".parse().unwrap(), mock_handshaker.clone())
+    let mut client = TrackerClient::new("0.0.0.0:4501".parse().unwrap(),[0_u8;20].into(),6969)
         .await
         .unwrap();
 
@@ -35,7 +33,7 @@ async fn main(){
     //不能直接用 "0.0.0.0:3501" 作为目标地址。因为返回的响应地址是具体的。
     let server_addr = "127.0.0.1:3501".parse().unwrap();
 
-    let send_token = client
+    let mut rx = client
         .request(
             server_addr,
             ClientRequest::Announce(
@@ -46,8 +44,8 @@ async fn main(){
         .unwrap();
 
     // 响应输出
-    let metadata = recv.recv().unwrap();
-    println!("send_token:{:?},metadata:{:?}",send_token, metadata.token());
+    let metadata = rx.recv().await.unwrap();
+    println!("metadata:{:?}",metadata.token());
 
     let response = metadata
         .result()
@@ -61,61 +59,9 @@ async fn main(){
         println!("response socket:{:?}",peer);
     }
 
-    mock_handshaker.connects_received(|connects| {
-        println!("connects len:{:?}",connects.len());
-    });
-
-
 }
 
 ////////////////////////////////////////////////////////////////////////////
-#[derive(Clone)]
-struct MockHandshaker {
-    send: Sender<ClientMetadata>,
-    connects: Arc<Mutex<Vec<SocketAddr>>>,
-}
-
-impl MockHandshaker {
-    pub fn new(send: Sender<ClientMetadata>) -> MockHandshaker {
-        MockHandshaker {
-            send: send,
-            connects: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub fn connects_received<F>(&self, callback: F)
-        where
-            F: FnOnce(&[SocketAddr]),
-    {
-        let locked = self.connects.lock().unwrap();
-
-        callback(&*locked);
-    }
-}
-
-impl Handshaker for MockHandshaker {
-    type Metadata = ClientMetadata;
-
-    fn id(&self) -> PeerId {
-        [0u8; 20].into()
-    }
-
-    fn port(&self) -> u16 {
-        6969
-    }
-
-    fn connect(&mut self, _: Option<PeerId>, _: InfoHash, addr: SocketAddr) {
-        self.connects.lock().unwrap().push(addr);
-    }
-
-    fn metadata(&mut self, data: ClientMetadata) {
-        self.send.send(data).unwrap();
-    }
-}
-
-
-///////////////////////////////////////////////
-
 
 const NUM_PEERS_RETURNED: usize = 20;
 
