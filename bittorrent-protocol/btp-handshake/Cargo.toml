@@ -12,6 +12,9 @@ crossbeam       = "0.8"
 bytes           = "0.4"
 nom             = "3.0"
 rand            = "0.3.0"
+log             = { version = "0.4.0", features = ["std"] }
 
-
+[dev-dependencies]
+log4rs          = "1.0.0"
+hex             = "0.3"
 

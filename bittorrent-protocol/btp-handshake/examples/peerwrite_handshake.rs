@@ -16,8 +16,6 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 
-use bittorrent_protocol::handshake::transports::{TcpTransport,UtpTransport};
-use bittorrent_protocol::handshake::{HandshakerManagerBuilder, InitiateMessage, Protocol, Extension, Extensions };
 use btp_handshake::{Extension, Extensions, HandshakerManagerBuilder, InitiateMessage, Protocol};
 use btp_handshake::transports::UtpTransport;
 use btp_util::bt::InfoHash;
@@ -65,24 +63,6 @@ fn main() {
 
 }
 
-
-fn hex_to_bytes(hex: &str) -> [u8; 20] {
-    let mut exact_bytes = [0u8; 20];
-
-    for byte_index in 0..20 {
-        let high_index = byte_index * 2;
-        let low_index = (byte_index * 2) + 1;
-
-        let hex_chunk = &hex[high_index..low_index + 1];
-        let byte_value = u8::from_str_radix(hex_chunk, 16).unwrap();
-
-        exact_bytes[byte_index] = byte_value;
-    }
-
-    exact_bytes
-}
-
-
 fn init_log() {
     let stdout = ConsoleAppender::builder()
         .target(Target::Stdout)
@@ -105,7 +85,7 @@ fn init_log() {
             Root::builder()
                 .appender("stdout")
                 .appender("file")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Warn),
         )
         .unwrap();
 
