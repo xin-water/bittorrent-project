@@ -20,7 +20,7 @@ btp-disk        = { version="0.3.0", path = "./btp-disk" }
 
 btp-dht         = { version="0.5.2", path = "./btp-dht" }
 btp-htracker    = { version="0.0.1", path = "./btp-htracker" }
-btp-utracker    = { version="0.2.0", path = "./btp-utracker" }
+btp-utracker    = { version="0.3.0", path = "./btp-utracker" }
 btp-lsd         = { version="0.0.1", path = "./btp-lsd" }
 
 btp-nat         = { version="0.0.1", path = "./btp-nat" }
