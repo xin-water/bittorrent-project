@@ -71,20 +71,11 @@ fn init_log() {
         )))
         .build();
 
-    let file = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new(
-            "[File] {d} - {l} - {t} - {m}{n}",
-        )))
-        .build("log/log.log")
-        .unwrap();
-
     let config = Config::builder()
         .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .appender(Appender::builder().build("file", Box::new(file)))
         .build(
             Root::builder()
                 .appender("stdout")
-                .appender("file")
                 .build(LevelFilter::Warn),
         )
         .unwrap();
