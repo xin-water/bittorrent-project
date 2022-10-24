@@ -173,18 +173,23 @@ impl<S> HandshakerManager<S>
             configured_handshake_timers(config.handshake_timeout(), config.connect_timeout());
 
         // Hook up our pipeline of handlers which will take some connection info, process it, and forward it
+        // 接收本地发送的握手请求，初始化后发送给 握手处理中心处理
         handler::loop_handler(
             addr_recv,
             (transport, filters.clone(), initiate_timer),
             initiator::initiator_handler,
             hand_send.clone(),
         );
+
+        // 监听中心，监听他人的握手请求，初始化后交给处理中心处理
         handler::loop_handler(
             listener,
             filters.clone(),
             |item, context| { ListenerHandler::new(item, context).poll() },
             hand_send,
         );
+
+        // 握手处理中心，接收所有初始化，执行握手，发送握手成功的socket到外部
         handler::loop_handler(
             hand_recv,
             (builder.ext, builder.pid, filters.clone(), handshake_timer),
