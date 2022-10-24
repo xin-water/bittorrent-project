@@ -23,7 +23,7 @@ async fn main(){
     // ping bt.ktrackers.com   ->  195.154.237.90
     let server_addr: SocketAddr = "195.154.237.90:6666".parse().unwrap();
     let hash = InfoHash::from_hex("3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
-    let send_token = client
+    let mut rx = client
         .request(
             server_addr,
             ClientRequest::Announce(
@@ -34,8 +34,10 @@ async fn main(){
         .unwrap();
 
     // 响应输出
-    let metadata = recv.recv().unwrap();
-    println!("send_token:{:?},metadata:{:?}",send_token, metadata.token());
+    //let metadata = recv.recv().unwrap();
+    let metadata = rx.recv().await.unwrap();
+
+    println!("metadata:{:?}",metadata.token());
 
     let response = metadata
         .result()

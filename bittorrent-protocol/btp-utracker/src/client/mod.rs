@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use btp_util::bt::InfoHash;
 use btp_util::trans::old::TIDGenerator;
@@ -145,15 +146,16 @@ impl TrackerClient {
     /// Execute an asynchronous request to the given tracker.
     ///
     /// If the maximum number of requests are currently in progress, return None.
-    pub async fn request(&mut self, addr: SocketAddr, request: ClientRequest) -> Option<ClientToken> {
+    pub async fn request(&mut self, addr: SocketAddr, request: ClientRequest) -> Option<UnboundedReceiver<ClientMetadata>> {
         if self.limiter.can_initiate() {
             let token = self.generator.generate();
+             let (tx,rx)= mpsc::unbounded_channel();
             self.send
-                .send(DispatchMessage::Request(addr, token, request))
+                .send(DispatchMessage::Request(addr, token, request,tx))
                 .await
                 .expect("bittorrent-protocol_utracker: Failed To Send Client Request Message...");
 
-            Some(token)
+            Some(rx)
         } else {
             None
         }

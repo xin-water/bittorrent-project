@@ -11,6 +11,7 @@ use rand::{self};
 use futures::StreamExt;
 use tokio::{select, sync::mpsc, task};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::UnboundedSender;
 // use umio::external::{self, Timeout};
 // use umio::{Dispatcher, ELoopBuilder, Provider};
 use btp_util::timer::{Timeout, Timer};
@@ -41,7 +42,7 @@ enum DispatchTimeout {
 /// Internal dispatch message for clients.
 #[derive(Debug)]
 pub enum DispatchMessage {
-    Request(SocketAddr, ClientToken, ClientRequest),
+    Request(SocketAddr, ClientToken, ClientRequest,mpsc::UnboundedSender<ClientMetadata>),
     StartTimer,
     Shutdown,
 }
@@ -181,8 +182,8 @@ where
 
     async fn command_in_handler(&mut self, message : DispatchMessage){
         match message {
-            DispatchMessage::Request(addr, token, req_type) => {
-                self.send_request(addr, token, req_type);
+            DispatchMessage::Request(addr, token, req_type, tx) => {
+                self.send_request(addr, token, req_type, tx);
             }
             DispatchMessage::StartTimer => self.timeout_handler(DispatchTimeout::CleanUp).await,
             DispatchMessage::Shutdown => self.shutdown(),
@@ -232,6 +233,7 @@ where
         addr: SocketAddr,
         token: ClientToken,
         request: ClientRequest,
+        tx:UnboundedSender<ClientMetadata>
     ) {
         // Check for IP version mismatch between source addr and dest addr
         match (self.bound_addr, addr) {
@@ -243,7 +245,7 @@ where
             _ => (),
         };
         self.active_requests
-            .insert(token, ConnectTimer::new(addr, request));
+            .insert(token, ConnectTimer::new(addr, request, tx));
 
         self.process_request(token, false);
     }
@@ -284,20 +286,26 @@ where
             match (conn_timer.message_params().1, response.response_type()) {
                 (&ClientRequest::Announce(hash, _), &ResponseType::Announce(ref res)) => {
                     // Forward contact information on to the handshaker
-                    for addr in res.peers().iter() {
-                        self.handshaker.connect(None, hash, addr);
-                    }
+                    // for addr in res.peers().iter() {
+                    //     self.handshaker.connect(None, hash, addr);
+                    // }
 
-                    self.notify_client(token, Ok(ClientResponse::Announce(res.to_owned())));
+                    // self.notify_client(token, Ok(ClientResponse::Announce(res.to_owned())));
+                    conn_timer.tx.send(ClientMetadata::new(token,Ok(ClientResponse::Announce(res.to_owned())))).expect("Announce send fail");
                 }
                 (&ClientRequest::Scrape(..), &ResponseType::Scrape(ref res)) => {
-                    self.notify_client(token, Ok(ClientResponse::Scrape(res.to_owned())));
+                   // self.notify_client(token, Ok(ClientResponse::Scrape(res.to_owned())));
+                    conn_timer.tx.send(ClientMetadata::new(token,Ok(ClientResponse::Scrape(res.to_owned())))).expect("Scrape send fail");
+
                 }
                 (_, &ResponseType::Error(ref res)) => {
-                    self.notify_client(token, Err(ClientError::ServerMessage(res.to_owned())));
+                    //self.notify_client(token, Err(ClientError::ServerMessage(res.to_owned())));
+                    conn_timer.tx.send(ClientMetadata::new(token,Err(ClientError::ServerMessage(res.to_owned())))).expect("ServerMessage send fail");
                 }
                 _ => {
-                    self.notify_client(token, Err(ClientError::ServerError));
+                    //self.notify_client(token, Err(ClientError::ServerError));
+                    conn_timer.tx.send(ClientMetadata::new(token,Err(ClientError::ServerError))).expect("ServerError send fail");
+
                 }
             }
         }
@@ -321,7 +329,8 @@ where
         let next_timeout = match conn_timer.current_timeout(timed_out) {
             Some(timeout) => timeout,
             None => {
-                self.notify_client(token, Err(ClientError::MaxTimeout));
+                //self.notify_client(token, Err(ClientError::MaxTimeout));
+                conn_timer.tx.send(ClientMetadata::new(token, Err(ClientError::MaxTimeout))).expect("MaxTimeout send fail");
 
                 return;
             }
@@ -383,7 +392,8 @@ where
 
         // If message was not sent (too long to fit) then end the request
         if !write_success {
-            self.notify_client(token, Err(ClientError::MaxLength));
+            //self.notify_client(token, Err(ClientError::MaxLength));
+            conn_timer.tx.send(ClientMetadata::new(token,Err(ClientError::MaxLength))).expect("MaxLength send fail");
         } else {
 
             conn_timer.set_timeout_id(
@@ -404,16 +414,18 @@ struct ConnectTimer {
     attempt: u64,
     request: ClientRequest,
     timeout_id: Option<Timeout>,
+    tx: UnboundedSender<ClientMetadata>,
 }
 
 impl ConnectTimer {
     /// Create a new ConnectTimer.
-    pub fn new(addr: SocketAddr, request: ClientRequest) -> ConnectTimer {
+    pub fn new(addr: SocketAddr, request: ClientRequest,tx: UnboundedSender<ClientMetadata>) -> ConnectTimer {
         ConnectTimer {
             addr: addr,
             attempt: 0,
             request: request,
             timeout_id: None,
+            tx:tx,
         }
     }
 
