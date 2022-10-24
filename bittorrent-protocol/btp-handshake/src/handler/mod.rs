@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use crossbeam::channel::{Sender};
+use crossbeam::channel::Sender;
 use crate::filter::filters::Filters;
 use crate::{Extensions, FilterDecision, InitiateMessage, Protocol};
 use btp_util::bt::{InfoHash, PeerId};
@@ -9,6 +9,7 @@ pub mod handshaker;
 pub mod initiator;
 pub mod listener;
 pub mod timer;
+pub mod framed;
 
 pub enum HandshakeType<S> {
     Initiate(S, InitiateMessage),

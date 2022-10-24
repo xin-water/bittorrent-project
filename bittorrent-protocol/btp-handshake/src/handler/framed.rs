@@ -3,8 +3,8 @@ use bytes::BytesMut;
 use nom::IResult;
 use std::io::{self, Cursor, Write, Read};
 
-use crate::message::bittorrent::message;
-use crate::message::bittorrent::message::HandshakeMessage;
+use crate::message::handshake;
+use crate::message::handshake::HandshakeMessage;
 use std::error::Error;
 
 enum HandshakeState {
@@ -93,7 +93,7 @@ impl<S>  FramedHandshake<S>
                             self.state = HandshakeState::Length(length);
 
                             self.read_pos = 1;
-                            self.read_buffer = vec![0u8; message::write_len_with_protocol_len(length)];
+                            self.read_buffer = vec![0u8; handshake::write_len_with_protocol_len(length)];
                             self.read_buffer[0] = length;
                         }
                         Ok(read) => panic!("bittorrent-protocol_handshake: Expected To Read Single Byte, Read {:?}", read),
@@ -101,7 +101,7 @@ impl<S>  FramedHandshake<S>
                     }
                 }
                 HandshakeState::Length(length) => {
-                    let expected_length = message::write_len_with_protocol_len(length);
+                    let expected_length = handshake::write_len_with_protocol_len(length);
 
                     if self.read_pos == expected_length {
                         match HandshakeMessage::from_bytes(&*self.read_buffer) {
@@ -140,8 +140,8 @@ mod tests {
 
     use std::io::{Cursor, Write};
 
-    use crate::message::bittorrent::framed::FramedHandshake;
-    use crate::message::bittorrent::message::HandshakeMessage;
+    use crate::handler::framed::FramedHandshake;
+    use crate::message::handshake::HandshakeMessage;
     use crate::message::extensions;
     use crate::{Extensions, Protocol};
     use btp_util::bt;

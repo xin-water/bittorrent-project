@@ -3,8 +3,8 @@ use std::io::{Read, Write};
 
 use btp_util::bt::PeerId;
 
-use crate::message::bittorrent::framed::FramedHandshake;
-use crate::message::bittorrent::message::HandshakeMessage;
+use crate::handler::framed::FramedHandshake;
+use crate::message::handshake::HandshakeMessage;
 use crate::filter::filters::Filters;
 use crate::handler;
 use crate::handler::timer::HandshakeTimer;
@@ -150,7 +150,7 @@ mod tests {
     use btp_util::bt;
     use btp_util::bt::{InfoHash, PeerId};
 
-    use crate::message::bittorrent::message::HandshakeMessage;
+    use crate::message::handshake::HandshakeMessage;
     use crate::filter::filters::Filters;
     use crate::handler::timer::HandshakeTimer;
     use crate::message::extensions;

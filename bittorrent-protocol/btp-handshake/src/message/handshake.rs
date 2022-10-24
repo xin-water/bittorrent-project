@@ -102,7 +102,7 @@ fn parse_remote_pid(bytes: &[u8]) -> IResult<&[u8], PeerId> {
 mod tests {
     use std::io::Write;
 
-    use crate::message::bittorrent::message::HandshakeMessage;
+    use crate::message::handshake::HandshakeMessage;
     use crate::message::extensions;
     use crate::{Extensions, Protocol};
     use btp_util::bt;
