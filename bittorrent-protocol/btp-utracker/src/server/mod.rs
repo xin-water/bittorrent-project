@@ -17,11 +17,9 @@ pub struct TrackerServer {
 
 impl TrackerServer {
     /// Run a new TrackerServer.
-    pub async fn run<H>(bind: SocketAddr, handler: H) -> io::Result<TrackerServer>
-    where
-        H: ServerHandler + 'static,
+    pub async fn run(bind: SocketAddr) -> io::Result<TrackerServer>
     {
-        dispatcher::create_dispatcher(bind, handler)
+        dispatcher::create_dispatcher(bind)
             .await
             .map(|send|
                 TrackerServer { send: send }
