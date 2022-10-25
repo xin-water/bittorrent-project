@@ -1,8 +1,11 @@
+use std::io::{Read, Write};
 use std::net::SocketAddr;
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use crate::filter::filters::Filters;
-use crate::{Extensions, FilterDecision, InitiateMessage, Protocol};
+use crate::{CompleteMessage, Extensions, FilterDecision, InitiateMessage, LocalAddr, Protocol, Transport};
 use btp_util::bt::{InfoHash, PeerId};
+use crate::handler::listener::ListenerHandler;
+use crate::handler::timer::HandshakeTimer;
 use crate::stream::Stream;
 
 pub mod handshaker;
@@ -19,21 +22,75 @@ pub enum HandshakeType<S> {
 /// Create loop for feeding the handler with the items coming from the stream, and forwarding the result to the sink.
 ///
 /// If the stream is used up, or an error is propogated from any of the elements, the loop will terminate.
-pub fn loop_handler<M, C, H, R>(mut stream:M, context: C, mut handler: H, sink: Sender<R>)
-where
-    M: Stream + 'static + Send,
-    C: 'static + Send,
-    R: 'static + Send ,
-    H: FnMut(M::Item, &C) -> Result<Option<R>,()> + 'static + Send ,
+// pub fn loop_handler<M, C, H, R>(mut stream:M, context: C, mut handler: H, sink: Sender<R>)
+// where
+//     M: Stream + 'static + Send,
+//     C: 'static + Send,
+//     R: 'static + Send ,
+//     H: FnMut(M::Item, &C) -> Result<Option<R>,()> + 'static + Send ,
+//
+// {
+//     std::thread::spawn(move||{
+//         loop {
+//              let item = stream.poll().unwrap();
+//              let opt_result=handler(item, &context).unwrap();
+//              if let Some(result) = opt_result {
+//                    sink.send(result).unwrap();
+//              }
+//         }
+//     });
+// }
 
+
+pub fn loop_handler_command<S, T>(mut stream: Receiver<InitiateMessage>,
+                                      context: (T,Filters, HandshakeTimer),
+                                      sink: Sender<HandshakeType<S>>)
+where
+        S: Read + Write + 'static + Send ,
+        T: Transport<Socket = S> + 'static + Send,
 {
     std::thread::spawn(move||{
         loop {
-             let item = stream.poll().unwrap();
-             let opt_result=handler(item, &context).unwrap();
-             if let Some(result) = opt_result {
-                   sink.send(result).unwrap();
-             }
+            let item = stream.poll().unwrap();
+            let opt_result = initiator::initiator_handler(item, &context).unwrap();
+            if let Some(result) = opt_result {
+                sink.send(result).unwrap();
+            }
+        }
+    });
+}
+
+pub fn loop_handler_Listener<S,L>(mut stream: L,
+                                      context: Filters,
+                                      sink: Sender<HandshakeType<S>>)
+where
+        S: Read + Write + 'static + Send ,
+        L: Stream<Item = (S, SocketAddr) > + LocalAddr + 'static,
+{
+    std::thread::spawn(move||{
+        loop {
+            let item = stream.poll().unwrap();
+            let opt_result = ListenerHandler::new(item, &context).poll().unwrap();
+            if let Some(result) = opt_result {
+                sink.send(result).unwrap();
+            }
+        }
+    });
+}
+
+pub fn loop_handler_handshake<S>(mut stream: Receiver<HandshakeType<S>>,
+                                      context:(Extensions,PeerId,Filters,HandshakeTimer ),
+                                      sink: Sender<CompleteMessage<S>>)
+    where
+        S: Read + Write + 'static + Send ,
+{
+    std::thread::spawn(move||{
+        loop {
+            let item = stream.poll().unwrap();
+            let opt_result = handshaker::execute_handshake(item, &context).unwrap();
+            if let Some(result) = opt_result {
+                sink.send(result).unwrap();
+            }
         }
     });
 }
