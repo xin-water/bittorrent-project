@@ -25,7 +25,7 @@ btp-lsd         = { version="0.0.1", path = "./btp-lsd" }
 
 btp-nat         = { version="0.0.1", path = "./btp-nat" }
 btp-utp         = { version="0.1.0", path = "./btp-utp" }
-btp-handshake   = { version="0.1.0", path = "./btp-handshake" }
+btp-handshake   = { version="0.2.0", path = "./btp-handshake" }
 btp-peer        = { version="0.1.0", path = "./btp-peer" }
 btp-select      = { version="0.1.0", path = "./btp-select" }
 
