@@ -4,18 +4,19 @@ use crossbeam::channel::{Receiver, Sender};
 use crate::filter::filters::Filters;
 use crate::{CompleteMessage, Extensions, FilterDecision, InitiateMessage, LocalAddr, Protocol, Transport};
 use btp_util::bt::{InfoHash, PeerId};
-use crate::handler::listener::ListenerHandler;
 use crate::handler::timer::HandshakeTimer;
 use crate::stream::Stream;
 
 pub mod handshaker;
-pub mod initiator;
-pub mod listener;
+//pub mod initiator;
+//pub mod listener;
 pub mod timer;
 pub mod framed;
 
 pub enum HandshakeType<S> {
+    //主动握手
     Initiate(S, InitiateMessage),
+    //监听握手
     Complete(S, SocketAddr),
 }
 
@@ -52,9 +53,19 @@ where
     std::thread::spawn(move||{
         loop {
             let item = stream.poll().unwrap();
-            let opt_result = initiator::initiator_handler(item, &context).unwrap();
-            if let Some(result) = opt_result {
-                sink.send(result).unwrap();
+
+            // 过虑判断，不应该过虑就发起链接
+            if !should_filter(Some(item.address()),
+                              Some(item.protocol()),
+                              None,
+                              Some(item.hash()),
+                              None,
+                              &context.1
+            ){
+                let res_connect = context.0.connect(item.address());
+                if let Ok(socket) = res_connect {
+                    sink.send(HandshakeType::Initiate(socket, item)).unwrap();
+                }
             }
         }
     });
@@ -69,10 +80,10 @@ where
 {
     std::thread::spawn(move||{
         loop {
-            let item = stream.poll().unwrap();
-            let opt_result = ListenerHandler::new(item, &context).poll().unwrap();
-            if let Some(result) = opt_result {
-                sink.send(result).unwrap();
+            let (sock,addr) = stream.poll().unwrap();
+
+            if !should_filter(Some(&addr), None, None, None, None, &context) {
+                sink.send(HandshakeType::Complete(sock, addr)).unwrap();
             }
         }
     });
