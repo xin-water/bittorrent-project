@@ -26,28 +26,41 @@ fn main() {
     init_log();
     info!("start run .......");
 
-    /**
-     *   bittorrent-protocol/examples_data/file/music.zip  info-hash
-     */
-    let hash = InfoHash::from_hex("E5B6BECAFD04BA0A9B7BBE6883A86DEDA731AE3C");
-
-    let addr = "127.0.0.1:44444".parse().expect(" socket parse error");
-
+    //创建1号握手
     // Show up as a uTorrent client...
     let peer_id = (*b"-UT2060-000000000000").into();
-
     let mut ext =Extensions::new();
     ext.add(Extension::ExtensionProtocol);
-
-    let mut handshaker_manager = HandshakerManagerBuilder::new()
+    let mut handshaker_manager_1 = HandshakerManagerBuilder::new()
         .with_peer_id(peer_id)
+        .with_bind_port(33333)
         .with_extensions(ext)
         .build(UtpTransport)
         .unwrap();
 
-    handshaker_manager.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr)).unwrap();
 
-    let completemessage = handshaker_manager.poll().unwrap();
+    //创建2号握手
+    // Show up as a uTorrent client...
+    let peer_id = (*b"-UT2060-100000000001").into();
+    let mut ext =Extensions::new();
+    ext.add(Extension::ExtensionProtocol);
+
+    let mut handshaker_manager_2 = HandshakerManagerBuilder::new()
+        .with_peer_id(peer_id)
+        .with_bind_port(55555)
+        .with_extensions(ext)
+        .build(UtpTransport)
+        .unwrap();
+
+    // 2号向1号发起握手请求，打印握手成功后消息
+    /**
+     *   bittorrent-protocol/examples_data/file/music.zip  info-hash
+     */
+    let hash = InfoHash::from_hex("E5B6BECAFD04BA0A9B7BBE6883A86DEDA731AE3C");
+    let addr = "127.0.0.1:33333".parse().expect(" socket parse error");
+    handshaker_manager_2.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr)).unwrap();
+
+    let completemessage = handshaker_manager_2.poll().unwrap();
 
     let (pro,ext,hash, peer_id,addr,s) = completemessage.into_parts();
 

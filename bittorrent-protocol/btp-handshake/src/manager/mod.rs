@@ -22,12 +22,13 @@ use crate::filter::filters::Filters;
 use crate::filter::{HandshakeFilter, HandshakeFilters};
 
 use crate::handler;
-use crate::handler::listener::ListenerHandler;
 use crate::handler::timer::HandshakeTimer;
-use crate::handler::{handshaker, initiator, HandshakeType};
+use crate::handler::{handshaker, HandshakeType};
 
 pub mod config;
 use self::config::HandshakerConfig;
+const DEFAULT_V4_PORT: u16 = 22222;
+const DEFAULT_V4_ADDR: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 
 /// Build configuration for `Handshaker` object creation.
 #[derive(Copy, Clone)]
@@ -42,17 +43,15 @@ pub struct HandshakerManagerBuilder {
 impl HandshakerManagerBuilder {
     /// Create a new `HandshakerBuilder`.
     pub fn new() -> HandshakerManagerBuilder {
-        let default_v4_addr = Ipv4Addr::new(0, 0, 0, 0);
-        let default_v4_port = 22222;
 
-        let default_sock_addr = SocketAddr::V4(SocketAddrV4::new(default_v4_addr, default_v4_port));
+        let default_sock_addr = SocketAddr::V4(SocketAddrV4::new(DEFAULT_V4_ADDR, DEFAULT_V4_PORT));
 
         let seed = rand::thread_rng().next_u32();
         let default_peer_id = PeerId::from_bytes(&convert::four_bytes_to_array(seed));
 
         HandshakerManagerBuilder {
             bind: default_sock_addr,
-            port: default_v4_port,
+            port: DEFAULT_V4_PORT,
             pid: default_peer_id,
             ext: Extensions::new(),
             config: HandshakerConfig::default(),
@@ -64,6 +63,12 @@ impl HandshakerManagerBuilder {
     /// Defaults to IN_ADDR_ANY using port 0 (any free port).
     pub fn with_bind_addr(&mut self, addr: SocketAddr) -> &mut HandshakerManagerBuilder {
         self.bind = addr;
+
+        self
+    }
+
+    pub fn with_bind_port(&mut self, bind_port: u16) -> &mut HandshakerManagerBuilder {
+        self.bind = SocketAddr::V4(SocketAddrV4::new(DEFAULT_V4_ADDR, bind_port));
 
         self
     }
