@@ -8,8 +8,6 @@ use crate::handler::timer::HandshakeTimer;
 use crate::stream::Stream;
 
 pub mod handshaker;
-//pub mod initiator;
-//pub mod listener;
 pub mod timer;
 pub mod framed;
 
@@ -20,31 +18,9 @@ pub enum HandshakeType<S> {
     Complete(S, SocketAddr),
 }
 
-/// Create loop for feeding the handler with the items coming from the stream, and forwarding the result to the sink.
-///
-/// If the stream is used up, or an error is propogated from any of the elements, the loop will terminate.
-// pub fn loop_handler<M, C, H, R>(mut stream:M, context: C, mut handler: H, sink: Sender<R>)
-// where
-//     M: Stream + 'static + Send,
-//     C: 'static + Send,
-//     R: 'static + Send ,
-//     H: FnMut(M::Item, &C) -> Result<Option<R>,()> + 'static + Send ,
-//
-// {
-//     std::thread::spawn(move||{
-//         loop {
-//              let item = stream.poll().unwrap();
-//              let opt_result=handler(item, &context).unwrap();
-//              if let Some(result) = opt_result {
-//                    sink.send(result).unwrap();
-//              }
-//         }
-//     });
-// }
-
-
 pub fn loop_handler_command<S, T>(mut stream: Receiver<InitiateMessage>,
-                                      context: (T,Filters, HandshakeTimer),
+                                      transport: T,
+                                      filters: Filters,
                                       sink: Sender<HandshakeType<S>>)
 where
         S: Read + Write + 'static + Send ,
@@ -60,9 +36,9 @@ where
                               None,
                               Some(item.hash()),
                               None,
-                              &context.1
+                              &filters
             ){
-                let res_connect = context.0.connect(item.address());
+                let res_connect = transport.connect(item.address());
                 if let Ok(socket) = res_connect {
                     sink.send(HandshakeType::Initiate(socket, item)).unwrap();
                 }
@@ -72,7 +48,7 @@ where
 }
 
 pub fn loop_handler_Listener<S,L>(mut stream: L,
-                                      context: Filters,
+                                      filters: Filters,
                                       sink: Sender<HandshakeType<S>>)
 where
         S: Read + Write + 'static + Send ,
@@ -82,7 +58,7 @@ where
         loop {
             let (sock,addr) = stream.poll().unwrap();
 
-            if !should_filter(Some(&addr), None, None, None, None, &context) {
+            if !should_filter(Some(&addr), None, None, None, None, &filters) {
                 sink.send(HandshakeType::Complete(sock, addr)).unwrap();
             }
         }
@@ -90,7 +66,7 @@ where
 }
 
 pub fn loop_handler_handshake<S>(mut stream: Receiver<HandshakeType<S>>,
-                                      context:(Extensions,PeerId,Filters,HandshakeTimer ),
+                                      context:(Extensions,PeerId,Filters,HandshakeTimer),
                                       sink: Sender<CompleteMessage<S>>)
     where
         S: Read + Write + 'static + Send ,
