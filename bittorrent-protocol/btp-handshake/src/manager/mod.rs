@@ -6,7 +6,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use rand::{self, Rng};
 
-use crossbeam::channel::{bounded, Receiver, SendError, Sender};
+use crossbeam::channel::{bounded, Receiver, Sender, SendError};
 use btp_util::bt::PeerId;
 use btp_util::convert;
 
@@ -14,9 +14,9 @@ use crate::discovery::DiscoveryInfo;
 use crate::local_addr::LocalAddr;
 use crate::transport::Transport;
 
-use crate::message::complete::CompleteMessage;
+use out_msg::CompleteMessage;
 use crate::message::extensions::Extensions;
-use crate::message::initiate::InitiateMessage;
+use in_msg::InitiateMessage;
 
 use crate::filter::filters::Filters;
 use crate::filter::{HandshakeFilter, HandshakeFilters};
@@ -26,6 +26,9 @@ use crate::handler::timer::HandshakeTimer;
 use crate::handler::{handshaker, HandshakeType};
 
 pub mod config;
+pub mod out_msg;
+pub mod in_msg;
+
 use self::config::HandshakerConfig;
 const DEFAULT_V4_PORT: u16 = 22222;
 const DEFAULT_V4_ADDR: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
@@ -181,7 +184,8 @@ impl<S> HandshakerManager<S>
         // 接收本地发送的握手请求，初始化后发送给 握手处理中心处理
         handler::loop_handler_command(
             addr_recv,
-            (transport, filters.clone(), initiate_timer),
+            transport,
+            filters.clone(),
             hand_send.clone(),
         );
 

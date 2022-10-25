@@ -12,9 +12,9 @@ mod filter;
 pub use filter::{FilterDecision, HandshakeFilter, HandshakeFilters};
 
 mod message;
-pub use message::complete::CompleteMessage;
+pub use manager::out_msg::CompleteMessage;
 pub use message::extensions::{Extension, Extensions};
-pub use message::initiate::InitiateMessage;
+pub use manager::in_msg::InitiateMessage;
 pub use message::protocol::Protocol;
 
 /// Built in objects implementing `Transport`.

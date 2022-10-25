@@ -1,4 +1,4 @@
-use super::protocol::Protocol;
+use crate::Protocol;
 use btp_util::bt::InfoHash;
 use std::net::SocketAddr;
 
