@@ -46,45 +46,26 @@ where
     let (prot, hash, addr) = init_msg.into_parts();
     let handshake_msg = HandshakeMessage::from_parts(prot.clone(), ext, hash, pid);
 
-        framed.send(handshake_msg).map_err(|_| ());
+        framed.send(handshake_msg);
 
         timer.timeout();
 
-        let composed_future = framed
-            .poll()
-            .map_err(|_| ())
-            .and_then(|opt_msg| opt_msg.ok_or(()).map(|msg| msg))
-            .and_then(|msg|{
+    if let Ok(Some(msg))= framed.poll(){
+        let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
+        let socket = framed.into_inner();
 
-                    let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
-                    let socket = framed.into_inner();
+        // Check that it responds with the same hash and protocol, also check our filters
+        if remote_hash == hash
+            && remote_prot == prot
+            && !handler::should_filter(Some(&addr), Some(&remote_prot), Some(&remote_ext), Some(&remote_hash), Some(&remote_pid), &filters)
+        {
 
-                    // Check that it responds with the same hash and protocol, also check our filters
-                    if remote_hash != hash
-                        || remote_prot != prot
-                        || handler::should_filter(
-                        Some(&addr),
-                        Some(&remote_prot),
-                        Some(&remote_ext),
-                        Some(&remote_hash),
-                        Some(&remote_pid),
-                        &filters,
-                    ) {
-                        Ok(None)
-                    } else {
-                        Ok(Some(CompleteMessage::new(
-                            prot,
-                            ext.union(&remote_ext),
-                            hash,
-                            remote_pid,
-                            addr,
-                            socket,
-                        )))
-                    }
-                })
-                .or_else(|_|Ok(None));
+            return  Ok(Some(CompleteMessage::new(prot, ext.union(&remote_ext), hash, remote_pid, addr, socket)));
+        }
+        return Ok(None);
+    }
 
-    composed_future
+    Ok(None)
 }
 
 fn complete_handshake<S>(
@@ -100,43 +81,30 @@ where
 {
     let mut framed = FramedHandshake::new(sock);
 
-    let composed_future = framed
-        .poll()
-        .map_err(|_|{()})
-        .and_then(|opt_msg| opt_msg.ok_or(()).map(|msg| msg))
-        .and_then(move |msg| {
-            let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
+    if let Ok(Some(msg))= framed.poll(){
+        let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
 
-            // Check our filters
-            if handler::should_filter(
-                Some(&addr),
-                Some(&remote_prot),
-                Some(&remote_ext),
-                Some(&remote_hash),
-                Some(&remote_pid),
-                &filters,
-            ) {
-                Err(())
-            } else {
-                    let handshake_msg = HandshakeMessage::from_parts(remote_prot.clone(), ext, remote_hash, pid);
-                    framed.send(handshake_msg);
+        // Check our filters
+        if !handler::should_filter(Some(&addr), Some(&remote_prot), Some(&remote_ext), Some(&remote_hash), Some(&remote_pid), &filters)
+        {
+            let handshake_msg = HandshakeMessage::from_parts(remote_prot.clone(), ext, remote_hash, pid);
+            framed.send(handshake_msg);
 
-                    timer.timeout();
+            timer.timeout();
 
-                    let socket = framed.into_inner();
-                    Ok(Some(CompleteMessage::new(
-                                remote_prot,
-                                ext.union(&remote_ext),
-                                remote_hash,
-                                remote_pid,
-                                addr,
-                                socket,
-                    )))
-            }
-        })
-        .or_else(|_| Ok(None));
-
-    composed_future
+            let socket = framed.into_inner();
+            return Ok(Some(CompleteMessage::new(
+                remote_prot,
+                ext.union(&remote_ext),
+                remote_hash,
+                remote_pid,
+                addr,
+                socket,
+            )));
+        }
+        return Err(());
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
