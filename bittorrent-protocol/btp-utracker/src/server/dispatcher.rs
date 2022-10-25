@@ -9,7 +9,6 @@ use crate::error::ErrorResponse;
 use crate::request::{RequestType, TrackerRequest};
 use crate::response::{ResponseType, TrackerResponse};
 use crate::scrape::{ScrapeRequest, ScrapeResponse, ScrapeStats};
-use crate::ServerHandler;
 use nom::IResult;
 use tokio::net::UdpSocket;
 use tokio::{select, task};

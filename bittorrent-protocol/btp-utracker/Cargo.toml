@@ -10,7 +10,6 @@ btp-util        = { version="0.2.1", path = "../btp-util" }
 nom             = "3.0"
 byteorder       = "1.1"
 chrono          = "0.4"
-umio            = "0.3"
 rand            = "0.3.0"
 futures         = "0.3"
 tokio           = { version = "1",features = ["full"]}

@@ -7,7 +7,7 @@ use tokio::time::{sleep, Duration};
 use btp_util::bt;
 use btp_util::bt::{InfoHash, PeerId};
 use btp_util::trans::old::TIDGenerator;
-use btp_utracker::{ClientMetadata, ClientRequest, ServerHandler, ServerResult, TrackerClient, TrackerServer};
+use btp_utracker::{ClientMetadata, ClientRequest, TrackerClient, TrackerServer};
 use btp_utracker::announce::{AnnounceEvent, AnnounceRequest, AnnounceResponse, ClientState};
 use btp_utracker::contact::{CompactPeers, CompactPeersV4, CompactPeersV6};
 use btp_utracker::scrape::{ScrapeRequest, ScrapeResponse, ScrapeStats};

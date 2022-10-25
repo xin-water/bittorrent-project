@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 use btp_util::bt;
 use btp_util::bt::{InfoHash, PeerId};
-use btp_utracker::{ClientMetadata, ClientRequest, Handshaker, TrackerClient, TrackerServer};
+use btp_utracker::{ClientMetadata, ClientRequest, TrackerClient, TrackerServer};
 use btp_utracker::announce::{AnnounceEvent, ClientState};
 
 #[tokio::main]
@@ -19,6 +19,7 @@ async fn main(){
     // 发起注册请求
     // utracker_server  "udp://bt.ktrackers.com:6666/announce"
     // ping bt.ktrackers.com   ->  195.154.237.90
+    // 有时候，你需要换个能正常访问的tracker服务来进行测试
     let server_addr: SocketAddr = "195.154.237.90:6666".parse().unwrap();
     let hash = InfoHash::from_hex("3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0");
     let mut rx = client

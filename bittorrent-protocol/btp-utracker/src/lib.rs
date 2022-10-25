@@ -27,7 +27,6 @@ mod server;
 pub use client::error::{ClientError, ClientResult};
 pub use client::{ClientMetadata, ClientRequest, ClientResponse, ClientToken, TrackerClient};
 
-pub use server::handler::{ServerHandler, ServerResult};
 pub use server::TrackerServer;
 
 pub use btp_util::bt::{InfoHash, PeerId};

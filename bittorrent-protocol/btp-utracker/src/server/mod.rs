@@ -3,10 +3,9 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc;
 
 use crate::server::dispatcher::DispatchMessage;
-use crate::ServerHandler;
 
 mod dispatcher;
-pub mod handler;
+//pub mod handler;
 
 /// Tracker server that executes responses asynchronously.
 ///
