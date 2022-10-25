@@ -7,12 +7,15 @@ edition = "2021"
 
 [dependencies]
 btp-util        = { version="0.2.1", path = "../btp-util" }
-btp-utp        = { version="0.1.0", path = "../btp-utp" }
+btp-utp         = { version="0.1.0", path = "../btp-utp" }
 crossbeam       = "0.8"
 bytes           = "0.4"
 nom             = "3.0"
 rand            = "0.3.0"
 log             = { version = "0.4.0", features = ["std"] }
+futures         = "0.3"
+tokio           = { version = "1.0", features = ["full"] }
+async-trait     = "0.1.56"
 
 [dev-dependencies]
 log4rs          = "1.0.0"
