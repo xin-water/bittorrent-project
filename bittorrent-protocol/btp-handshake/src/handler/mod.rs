@@ -16,11 +16,6 @@ pub enum HandshakeType<S> {
     Complete(S, SocketAddr),
 }
 
-enum LoopError {
-    Terminate,
-    Recoverable,
-}
-
 /// Create loop for feeding the handler with the items coming from the stream, and forwarding the result to the sink.
 ///
 /// If the stream is used up, or an error is propogated from any of the elements, the loop will terminate.
@@ -34,34 +29,11 @@ where
 {
     std::thread::spawn(move||{
         loop {
-            // We will terminate the loop if, the stream gives us an error, the stream gives us None, the handler gives
-            // us an error, or the sink gives us an error. If the handler gives us Ok(None), we will map that to a
-            // recoverable error (since our Ok(Some) result would have to continue with its own future, we hijack
-            // the error to store an immediate value). We finally map any recoverable errors back to an Ok value
-            // so we can continue with the loop in that case.
-            let reruslt = stream
-                .poll()
-                .map_err(|_| LoopError::Terminate)
-                .and_then(|item| {
-                    let result = handler(item, &context);
-                    result
-                        .map_err(|_| LoopError::Terminate)
-                        .and_then(move |opt_result|
-                            match opt_result {
-                                Some(result) => Ok(result),
-                                None => Err(LoopError::Recoverable),
-                            })
-                })
-                .and_then(|result| {
-                    sink.send(result)
-                        .map_err(|_| LoopError::Terminate)
-                });
-
-            match reruslt {
-                Err(LoopError::Terminate) => break,
-                Err(LoopError::Recoverable) => {}
-                _ => {}
-            }
+             let item = stream.poll().unwrap();
+             let opt_result=handler(item, &context).unwrap();
+             if let Some(result) = opt_result {
+                   sink.send(result).unwrap();
+             }
         }
     });
 }
