@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use crossbeam::channel::{Receiver, Sender};
 use futures::{Stream, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::{select, task};

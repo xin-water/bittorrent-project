@@ -17,10 +17,11 @@ use std::thread;
 use std::time::Duration;
 
 use btp_handshake::{Extension, Extensions, HandshakerManagerBuilder, InitiateMessage, Protocol};
-use btp_handshake::transports::UtpTransport;
+use btp_handshake::transports::{TcpTransport, UtpTransport};
 use btp_util::bt::InfoHash;
 
-fn main() {
+#[tokio::main]
+async fn main() {
 
     // Start logger
     init_log();
@@ -35,7 +36,8 @@ fn main() {
         .with_peer_id(peer_id)
         .with_bind_port(33333)
         .with_extensions(ext)
-        .build(UtpTransport)
+        .build(TcpTransport)
+        .await
         .unwrap();
 
 
@@ -49,7 +51,8 @@ fn main() {
         .with_peer_id(peer_id)
         .with_bind_port(55555)
         .with_extensions(ext)
-        .build(UtpTransport)
+        .build(TcpTransport)
+        .await
         .unwrap();
 
     // 2号向1号发起握手请求，打印握手成功后消息
@@ -58,9 +61,12 @@ fn main() {
      */
     let hash = InfoHash::from_hex("E5B6BECAFD04BA0A9B7BBE6883A86DEDA731AE3C");
     let addr = "127.0.0.1:33333".parse().expect(" socket parse error");
-    handshaker_manager_2.send(InitiateMessage::new(Protocol::BitTorrent, hash, addr)).unwrap();
+    handshaker_manager_2
+        .send(InitiateMessage::new(Protocol::BitTorrent, hash, addr))
+        .await
+        .unwrap();
 
-    let completemessage = handshaker_manager_2.poll().unwrap();
+    let completemessage = handshaker_manager_2.poll().await.unwrap();
 
     let (pro,ext,hash, peer_id,addr,s) = completemessage.into_parts();
 

@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 btp-metainfo    = { version="0.1.0", path = "../btp-metainfo" }
 btp-utracker    = { version="0.3.0", path = "../btp-utracker" }
-btp-handshake   = { version="0.2.0", path = "../btp-handshake" }
+btp-handshake   = { version="0.3.0", path = "../btp-handshake" }
 btp-peer        = { version="0.1.0", path = "../btp-peer" }
 error-chain     = "0.12"
 log             = { version = "0.4.0", features = ["std"] }
