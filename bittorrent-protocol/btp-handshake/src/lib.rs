@@ -19,19 +19,14 @@ pub use message::protocol::Protocol;
 
 /// Built in objects implementing `Transport`.
 pub mod transports {
-    pub use super::transport::{TcpListenerStream, TcpTransport,UtpListenerStream, UtpTransport};
+    pub use crate::socket::transport::{TcpListenerStream, TcpTransport, UtpListenerStream, UtpTransport};
 }
+mod socket;
 
-mod transport;
-pub use transport::Transport;
+pub use socket::transport::Transport;
 
-mod stream;
-pub use stream::Stream;
+pub use socket::local_addr::LocalAddr;
 
-mod local_addr;
-pub use local_addr::LocalAddr;
-
-mod discovery;
-pub use discovery::DiscoveryInfo;
+pub use manager::discovery::DiscoveryInfo;
 
 pub use btp_util::bt::{InfoHash, PeerId};

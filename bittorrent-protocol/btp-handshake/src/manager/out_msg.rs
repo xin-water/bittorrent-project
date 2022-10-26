@@ -4,6 +4,7 @@ use crate::{Extensions, Protocol};
 use btp_util::bt::{InfoHash, PeerId};
 
 /// Message containing completed handshaking information.
+#[derive(Debug)]
 pub struct CompleteMessage<S> {
     prot: Protocol,
     ext: Extensions,
