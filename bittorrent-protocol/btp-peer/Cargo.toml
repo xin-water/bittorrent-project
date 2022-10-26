@@ -15,5 +15,12 @@ error-chain     = "0.12"
 nom             = "3.0"
 byteorder       = "1.1"
 log             = { version = "0.4.0", features = ["std"] }
+futures         = "0.3"
+tokio           = { version = "1.0", features = ["full"] }
+
+
+[dev-dependencies]
+log4rs          = "1.0.0"
+
 
 
