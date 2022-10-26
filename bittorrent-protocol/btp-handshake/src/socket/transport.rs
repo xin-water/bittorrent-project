@@ -1,44 +1,51 @@
+use std::fmt::Debug;
 use std::io;
 
-use super::local_addr::LocalAddr;
+use crate::socket::local_addr::LocalAddr;
 
-use std::io::{Read, Write, Error, ErrorKind};
-use std::net::{TcpStream, TcpListener};
+use tokio::io::{ AsyncRead, AsyncWrite, Error, ErrorKind};
+use tokio::net::{TcpStream, TcpListener};
 use std::net::{SocketAddr, Incoming};
 use std::option::Option::Some;
-use super::stream::Stream;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use futures::stream::Stream;
 use btp_utp::{UtpSocket, UtpListener, UtpStream};
+use async_trait::async_trait;
 
 /// Trait for initializing connections over an abstract `Transport`.
+#[async_trait]
 pub trait Transport {
     /// Concrete socket.
-    type Socket: Read + Write + 'static;
+    type Socket: AsyncRead + AsyncWrite + 'static + Unpin + Debug;
 
     /// Concrete listener.
-    type Listener: Stream<Item = (Self::Socket, SocketAddr) > + LocalAddr + 'static;
+    type Listener: Stream<Item = (Self::Socket, SocketAddr) > + LocalAddr + 'static + Send + std::marker::Unpin;
 
     /// Connect to the given address over this transport, using the supplied `Handle`.
-    fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket>;
+    async fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket>;
 
     /// Listen to the given address for this transport, using the supplied `Handle`.
-    fn listen(&self, addr: &SocketAddr ) -> io::Result<Self::Listener>;
+    async fn listen(&self, addr: &SocketAddr ) -> io::Result<Self::Listener>;
 }
 
 //----------------------------------------------------------------------------------//
 
 /// Defines a `Transport` operating over TCP.
+#[derive(Debug)]
 pub struct TcpTransport;
 
+#[async_trait]
 impl Transport for TcpTransport {
     type Socket = TcpStream;
     type Listener = TcpListenerStream;
 
-    fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket> {
-        TcpStream::connect(addr)
+    async fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket> {
+        TcpStream::connect(addr).await
     }
 
-    fn listen(&self, addr: &SocketAddr) -> io::Result<Self::Listener> {
-        let listener = TcpListener::bind(addr)?;
+    async fn listen(&self, addr: &SocketAddr) -> io::Result<Self::Listener> {
+        let listener = TcpListener::bind(addr).await?;
         let listen_addr = listener.local_addr()?;
 
         Ok(TcpListenerStream::new(listen_addr, listener))
@@ -70,11 +77,11 @@ impl LocalAddr for TcpListenerStream {
 impl Stream for TcpListenerStream  {
     type Item = (TcpStream,SocketAddr);
 
-    fn poll(&mut self) -> io::Result<(TcpStream,SocketAddr)> {
-        if let Ok((result,addr)) = self.listener.accept() {
-            Ok((result,addr))
-        }else {
-            Err(Error::new(ErrorKind::NotFound, "listener fail"))
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match  Pin::new(&self.listener).poll_accept(cx){
+            Poll::Pending => { Poll::Pending }
+            Poll::Ready(Err(_)) => { Poll::Ready(None) }
+            Poll::Ready(Ok(x)) => { Poll::Ready(Some(x)) }
         }
     }
 }
@@ -83,22 +90,22 @@ impl Stream for TcpListenerStream  {
 /// Defines a `Transport` operating over UTP.
 pub struct UtpTransport;
 
-
-impl Transport for UtpTransport {
-    type Socket = UtpSocket;
-    type Listener = UtpListenerStream;
-
-    fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket> {
-        UtpSocket::connect(addr)
-    }
-
-    fn listen(&self, addr: &SocketAddr) -> io::Result<Self::Listener> {
-        let listener = UtpListener::bind(addr)?;
-        let listen_addr = listener.local_addr()?;
-
-        Ok(UtpListenerStream::new(listen_addr, listener))
-    }
-}
+// #[async_trait]
+// impl Transport for UtpTransport {
+//     type Socket = UtpSocket;
+//     type Listener = UtpListenerStream;
+//
+//     async fn connect(&self, addr: &SocketAddr) -> io::Result<Self::Socket> {
+//         UtpSocket::connect(addr)
+//     }
+//
+//     async fn listen(&self, addr: &SocketAddr) -> io::Result<Self::Listener> {
+//         let listener = UtpListener::bind(addr)?;
+//         let listen_addr = listener.local_addr()?;
+//
+//         Ok(UtpListenerStream::new(listen_addr, listener))
+//     }
+// }
 
 
 /// Convenient object that wraps a listener stream `L`, and also implements `LocalAddr`.
@@ -126,11 +133,11 @@ impl LocalAddr for UtpListenerStream {
 impl Stream for UtpListenerStream  {
     type Item = (UtpSocket,SocketAddr);
 
-    fn poll(&mut self) -> io::Result<(UtpSocket,SocketAddr)> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Ok((result,addr)) = self.listener.accept() {
-            Ok((result,addr))
+            Poll::Ready(Some((result,addr)))
         }else {
-            Err(Error::new(ErrorKind::NotFound, "listener fail"))
+            Poll::Ready(None)
         }
     }
 }

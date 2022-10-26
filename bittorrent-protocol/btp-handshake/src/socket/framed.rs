@@ -6,6 +6,8 @@ use std::io::{self, Cursor, Write, Read};
 use crate::message::handshake;
 use crate::message::handshake::HandshakeMessage;
 use std::error::Error;
+use std::pin::Pin;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 enum HandshakeState {
     Waiting,
@@ -43,14 +45,14 @@ impl<S> FramedHandshake<S> {
 
 impl<S> FramedHandshake<S>
     where
-        S: Write,
+        S: AsyncWrite + std::marker::Unpin,
 {
-    pub(crate) fn send(&mut self, item: HandshakeMessage) -> Result<(),io::Error> {
+    pub(crate) async fn send(&mut self, item: HandshakeMessage) -> Result<(),io::Error> {
         self.write_buffer.reserve(item.write_len());
         item.write_bytes(self.write_buffer.by_ref().writer())?;
 
         loop {
-            let write_result = self.sock.write(&self.write_buffer);
+            let write_result = Pin::new(&mut self.sock).write(&self.write_buffer).await;
 
             match write_result {
                 Ok(0) => {
@@ -65,7 +67,7 @@ impl<S> FramedHandshake<S>
             }
 
             if self.write_buffer.is_empty() {
-                self.sock.flush();
+                Pin::new(&mut self.sock).flush();
 
                 return Ok(());
             }
@@ -75,15 +77,15 @@ impl<S> FramedHandshake<S>
 
 impl<S>  FramedHandshake<S>
     where
-        S: Read
+        S: AsyncRead + std::marker::Unpin
 {
-    pub fn poll(&mut self) -> io::Result<Option<HandshakeMessage>> {
+    pub async fn read(&mut self) -> io::Result<Option<HandshakeMessage>> {
         loop {
             match self.state {
                 HandshakeState::Waiting => {
-                    let read_result = self
-                        .sock
-                        .read(&mut self.read_buffer[..]);
+                    let read_result =Pin::new(&mut self.sock)
+                        .read(&mut self.read_buffer[..])
+                        .await;
 
                     match read_result {
                         Ok(0) => return Ok(None),
@@ -118,7 +120,7 @@ impl<S>  FramedHandshake<S>
                     } else {
 
                         let read_buffer = &mut self.read_buffer[self.read_pos..];
-                        let read_result = self.sock.read(read_buffer);
+                        let read_result = Pin::new(&mut self.sock).read(read_buffer).await;
 
                         match read_result {
                             Ok(0) => return Ok(None),
@@ -140,7 +142,7 @@ mod tests {
 
     use std::io::{Cursor, Write};
 
-    use crate::handler::framed::FramedHandshake;
+    use crate::socket::framed::FramedHandshake;
     use crate::message::handshake::HandshakeMessage;
     use crate::message::extensions;
     use crate::{Extensions, Protocol};
