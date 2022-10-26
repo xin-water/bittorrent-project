@@ -1,56 +1,36 @@
 use std::net::SocketAddr;
 use std::io::{Read, Write};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use btp_util::bt::PeerId;
 
-use crate::handler::framed::FramedHandshake;
+use crate::socket::framed::FramedHandshake;
 use crate::message::handshake::HandshakeMessage;
 use crate::filter::filters::Filters;
 use crate::handler;
-use crate::handler::timer::HandshakeTimer;
-use crate::handler::HandshakeType;
 use crate::{CompleteMessage, Extensions, InitiateMessage};
 
-pub fn execute_handshake<S>(
-    item: HandshakeType<S>,
-    context: &(Extensions, PeerId, Filters, HandshakeTimer),
-) -> Result<Option<CompleteMessage<S>>, ()>
-where
-    S: Read + Write + 'static,
-{
-    let &(ref ext, ref pid, ref filters, ref timer) = context;
 
-    match item {
-        HandshakeType::Initiate(sock, init_msg) => {
-            initiate_handshake(sock, init_msg, *ext, *pid, filters.clone(), timer.clone())
-        }
-        HandshakeType::Complete(sock, addr) => {
-            complete_handshake(sock, addr, *ext, *pid, filters.clone(), timer.clone())
-        }
-    }
-}
-
-fn initiate_handshake<S>(
+pub(crate) async fn initiate_handshake<S>(
     sock: S,
     init_msg: InitiateMessage,
     ext: Extensions,
     pid: PeerId,
-    filters: Filters,
-    timer: HandshakeTimer,
+    filters: Arc<Filters>,
 ) -> Result<Option<CompleteMessage<S>>, ()>
 where
-    S: Read + Write + 'static,
+    S: AsyncRead + AsyncWrite + 'static + Unpin,
 {
     let mut framed = FramedHandshake::new(sock);
 
     let (prot, hash, addr) = init_msg.into_parts();
     let handshake_msg = HandshakeMessage::from_parts(prot.clone(), ext, hash, pid);
 
-        framed.send(handshake_msg);
+        framed.send(handshake_msg).await;
 
-        timer.timeout();
-
-    if let Ok(Some(msg))= framed.poll(){
+    if let Ok(Some(msg))= framed.read().await{
         let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
         let socket = framed.into_inner();
 
@@ -68,29 +48,26 @@ where
     Ok(None)
 }
 
-fn complete_handshake<S>(
+pub async fn complete_handshake<S>(
     sock: S,
     addr: SocketAddr,
     ext: Extensions,
     pid: PeerId,
-    filters: Filters,
-    timer: HandshakeTimer,
+    filters: Arc<Filters>,
 ) -> Result<Option<CompleteMessage<S>>,()>
 where
-    S: Read + Write + 'static,
+    S: AsyncRead + AsyncWrite + 'static + Unpin,
 {
     let mut framed = FramedHandshake::new(sock);
 
-    if let Ok(Some(msg))= framed.poll(){
+    if let Ok(Some(msg))= framed.read().await{
         let (remote_prot, remote_ext, remote_hash, remote_pid) = msg.into_parts();
 
         // Check our filters
         if !handler::should_filter(Some(&addr), Some(&remote_prot), Some(&remote_ext), Some(&remote_hash), Some(&remote_pid), &filters)
         {
             let handshake_msg = HandshakeMessage::from_parts(remote_prot.clone(), ext, remote_hash, pid);
-            framed.send(handshake_msg);
-
-            timer.timeout();
+            framed.send(handshake_msg).await;
 
             let socket = framed.into_inner();
             return Ok(Some(CompleteMessage::new(

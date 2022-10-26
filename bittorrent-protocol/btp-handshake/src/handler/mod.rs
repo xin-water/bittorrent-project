@@ -1,86 +1,128 @@
+use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use crossbeam::channel::{Receiver, Sender};
+use futures::{Stream, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{select, task};
+use tokio::sync::mpsc;
 use crate::filter::filters::Filters;
 use crate::{CompleteMessage, Extensions, FilterDecision, InitiateMessage, LocalAddr, Protocol, Transport};
 use btp_util::bt::{InfoHash, PeerId};
-use crate::handler::timer::HandshakeTimer;
-use crate::stream::Stream;
 
 pub mod handshaker;
-pub mod timer;
-pub mod framed;
 
-pub enum HandshakeType<S> {
-    //主动握手
-    Initiate(S, InitiateMessage),
-    //监听握手
-    Complete(S, SocketAddr),
+pub(crate) async fn srart_handler_task<S,T,L>(
+    pid: PeerId,
+    ext: Extensions,
+    transport: T,
+    listener:L,
+    command:mpsc::Receiver<InitiateMessage>,
+    sock_send:mpsc::UnboundedSender<CompleteMessage<S>>,
+    filters:Filters,
+)
+where S: AsyncRead + AsyncWrite + Send + Unpin +'static + Debug,
+      T: Transport<Socket = S> + Send + Sync + 'static,
+      L: Stream<Item=(S,SocketAddr)> + Send + Unpin  + 'static,
+{
+    let mut handler = HandshakeHandler::new(pid,ext,transport,listener,command,sock_send,filters);
+    task::spawn(handler.run());
 }
 
-pub fn loop_handler_command<S, T>(mut stream: Receiver<InitiateMessage>,
-                                      transport: T,
-                                      filters: Filters,
-                                      sink: Sender<HandshakeType<S>>)
-where
-        S: Read + Write + 'static + Send ,
-        T: Transport<Socket = S> + 'static + Send,
-{
-    std::thread::spawn(move||{
-        loop {
-            let item = stream.poll().unwrap();
+pub struct HandshakeHandler<S,T,L>{
+    is_run: bool,
+    filters: Arc<Filters>,
+    ext: Extensions,
+    pid: PeerId,
+    command_rx: mpsc::Receiver<InitiateMessage>,
+    transport: T,
+    listen: L,
+    out_msg: mpsc::UnboundedSender<CompleteMessage<S>>
+}
 
-            // 过虑判断，不应该过虑就发起链接
-            if !should_filter(Some(item.address()),
-                              Some(item.protocol()),
-                              None,
-                              Some(item.hash()),
-                              None,
-                              &filters
-            ){
-                let res_connect = transport.connect(item.address());
-                if let Ok(socket) = res_connect {
-                    sink.send(HandshakeType::Initiate(socket, item)).unwrap();
+impl<S,T,L> HandshakeHandler<S,T,L>
+where S: AsyncRead + AsyncWrite + Send + Unpin + Debug + 'static,
+      L: Stream<Item=(S, SocketAddr)> + Send + Unpin,
+      T: Transport<Socket = S> + Send + std::marker::Sync,
+{
+
+    fn new( pid: PeerId,ext: Extensions,transport: T, listener:L, command:mpsc::Receiver<InitiateMessage>, sock_send:mpsc::UnboundedSender<CompleteMessage<S>>, filters:Filters,) ->Self{
+
+        HandshakeHandler{
+            is_run: true,
+            ext: ext,
+            pid: pid,
+            filters: Arc::new(filters),
+            command_rx: command,
+            transport: transport,
+            listen: listener,
+            out_msg: sock_send
+        }
+    }
+
+    fn shutdown(&mut self){
+        self.is_run = false;
+    }
+
+    pub async fn run(mut self){
+        while self.is_run {
+            self.run_one().await
+        }
+    }
+
+    pub async fn run_one(&mut self){
+        select! {
+            command = self.command_rx.recv() => {
+                if let Some(command) = command {
+                    self.handle_command(command).await
+                } else {
+                    self.shutdown()
+                }
+            }
+            message = self.listen.next() => {
+                match message {
+                    Some((socket, addr)) =>  self.handle_listen(socket, addr).await,
+                    None => log::warn!("Failed to receive listen message"),
                 }
             }
         }
-    });
-}
+    }
 
-pub fn loop_handler_Listener<S,L>(mut stream: L,
-                                      filters: Filters,
-                                      sink: Sender<HandshakeType<S>>)
-where
-        S: Read + Write + 'static + Send ,
-        L: Stream<Item = (S, SocketAddr) > + LocalAddr + 'static,
-{
-    std::thread::spawn(move||{
-        loop {
-            let (sock,addr) = stream.poll().unwrap();
 
-            if !should_filter(Some(&addr), None, None, None, None, &filters) {
-                sink.send(HandshakeType::Complete(sock, addr)).unwrap();
+    pub(crate) async fn handle_command(&mut self, item:InitiateMessage){
+
+        // 过虑判断，不应该过虑就发起链接
+        if !should_filter(Some(item.address()),
+                          Some(item.protocol()),
+                          None,
+                          Some(item.hash()),
+                          None,
+                          &self.filters
+        ){
+            let res_connect = self.transport.connect(item.address()).await;
+            if let Ok(socket) = res_connect {
+                match handshaker::initiate_handshake(socket,item,self.ext.clone(),self.pid.clone(),self.filters.clone()).await {
+                    Ok(Some(s))=>self.out_msg.send(s).expect("send initiate_handshake msg fail"),
+                    _ => {}
+                }
             }
         }
-    });
+    }
+
+    pub(crate) async fn handle_listen(&mut self, socket:S, addr:SocketAddr){
+
+        if !should_filter(Some(&addr), None, None, None, None, &self.filters.clone()) {
+           match handshaker::complete_handshake(socket,addr,self.ext.clone(),self.pid.clone(),self.filters.clone()).await{
+               Ok(Some(s))=>self.out_msg.send(s).expect("send complete_handshake msg fail"),
+               _ => {}
+           }
+        }
+    }
+
 }
 
-pub fn loop_handler_handshake<S>(mut stream: Receiver<HandshakeType<S>>,
-                                      context:(Extensions,PeerId,Filters,HandshakeTimer),
-                                      sink: Sender<CompleteMessage<S>>)
-    where
-        S: Read + Write + 'static + Send ,
-{
-    std::thread::spawn(move||{
-        loop {
-            let item = stream.poll().unwrap();
-            let opt_result = handshaker::execute_handshake(item, &context).unwrap();
-            if let Some(result) = opt_result {
-                sink.send(result).unwrap();
-            }
-        }
-    });
-}
 
 /// Computes whether or not we should filter given the parameters and filters.
 pub fn should_filter(
