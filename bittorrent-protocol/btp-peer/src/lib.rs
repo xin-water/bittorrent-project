@@ -31,9 +31,9 @@ pub mod messages {
     }
 }
 
-mod message_codec;
-pub use message_codec::MessageCodec;
-pub use message_codec::codec::PeerWireMessageCodec;
+mod codec;
+pub use codec::MessageCodec;
+pub use codec::codec::PeerWireMessageCodec;
 
 mod manager;
 pub use manager::{
@@ -41,7 +41,10 @@ pub use manager::{
     PeerManagerSink, PeerManagerStream,
 };
 pub use manager::builder::PeerManagerBuilder;
-pub use manager::peer_info::PeerInfo;
+pub use handler::peer_info::PeerInfo;
+
+mod handler;
+mod split;
 
 /// `PeerManager` error types.
 pub mod error {

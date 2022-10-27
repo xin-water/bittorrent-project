@@ -1,4 +1,7 @@
+use std::fmt::Debug;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
+use crate::split::Split;
 
 use super::{ManagedMessage, PeerManager};
 
@@ -86,7 +89,10 @@ impl PeerManagerBuilder {
     }
 
     /// Build a `PeerManager` from the current `PeerManagerBuilder`.
-    pub fn build<S>(self) -> PeerManager<S>{
+    pub fn build<S>(self) -> PeerManager<S>
+    where S: Send + AsyncRead + AsyncWrite + 'static + Split + Debug,
+
+    {
         PeerManager::from_builder(self)
     }
 }
