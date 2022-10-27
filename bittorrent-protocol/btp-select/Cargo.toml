@@ -19,6 +19,8 @@ rand            = "0.3.0"
 [dev-dependencies]
 log4rs          = "1.0.0"
 clap            = "2.33"
+hex             = "0.3"
+
 
 
 
