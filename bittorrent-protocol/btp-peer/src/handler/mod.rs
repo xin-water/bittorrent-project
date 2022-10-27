@@ -161,7 +161,7 @@ where S: AsyncRead + AsyncWrite + Send + 'static + Debug + Split,
 
                     self.out_send
                         .send(OPeerManagerMessage::PeerRemoved(info))
-                        .expect(" out msg fail ");
+                        .expect(" out msg send PeerRemoved fail ");
 
                 }
 
@@ -176,7 +176,7 @@ where S: AsyncRead + AsyncWrite + Send + 'static + Debug + Split,
 
                     self.out_send
                         .send(OPeerManagerMessage::PeerDisconnect(info))
-                        .expect(" out msg fail ");;
+                        .expect(" out msg send PeerDisconnect fail ");;
 
                 }
 
@@ -191,11 +191,9 @@ where S: AsyncRead + AsyncWrite + Send + 'static + Debug + Split,
                         .remove(&info)
                         .unwrap_or_else(|| panic!("bittorrent-protocol_peer: Received PeerError Message With No Matching Peer In Map"));
 
-
-
                     self.out_send
                         .send(OPeerManagerMessage::PeerError(info, error))
-                        .expect(" out msg fail ");
+                        .expect(" out msg send PeerError fail ");
 
                 }
 

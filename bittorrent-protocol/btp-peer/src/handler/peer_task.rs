@@ -54,9 +54,17 @@ where R: AsyncRead + AsyncReadExt + Send + 'static + Unpin,
             read_position = in_buffer.position() as usize;
             let in_slice:&mut [u8] = &mut in_buffer.get_mut()[read_position..];
             let read_result = peer_read.read(in_slice).await;
-            if let Ok(bytes_read) = read_result {
-                read_position += bytes_read;
+            match read_result{
+                Ok(bytes_read) => {
+                    read_position += bytes_read;
+                }
+                Err(error) => {
+                    //读取出错，可能流已经关闭了，直接返回，结束工作
+                    log::error!("peer_read read data error:{:?}",error);
+                    return;
+                }
             }
+
             in_buffer.set_position(read_position as u64);
         }
 
@@ -90,6 +98,7 @@ where R: AsyncRead + AsyncReadExt + Send + 'static + Unpin,
 
                 in_buffer = Cursor::new(v);
                 in_buffer.set_position(len as u64);
+
                 break;
             }
         }
@@ -101,10 +110,9 @@ async fn loop_write_msg<S,W>(info: PeerInfo,
                              o_send: UnboundedSender<OPeerManagerMessage>,
                              mut peer_write: W,
                              msg_codec: Arc<Mutex<PeerWireMessageCodec>>)
-
-    where
-        S: AsyncRead + AsyncWrite + Split + Send + 'static,
-        W: AsyncWrite + AsyncWriteExt + Send + 'static + Unpin,
+where
+    S: AsyncRead + AsyncWrite + Split + Send + 'static,
+    W: AsyncWrite + AsyncWriteExt + Send + 'static + Unpin,
 
 {
     o_send.send(OPeerManagerMessage::PeerAdded(info)).unwrap();
@@ -113,87 +121,43 @@ async fn loop_write_msg<S,W>(info: PeerInfo,
 
     loop {
         //构造result
-        let result = match msg_rx.recv().await {
+         match msg_rx.recv().await {
             Some(IPeerManagerMessage::SendMessage(p_info, mid, p_message)) =>{
-                Ok((
-                    Some(p_message),
-                    Some(OPeerManagerMessage::SentMessage(p_info, mid)),
-                    true,
-                ))
 
+                out_buffer.set_position(0);
+
+                //获取锁，消息序列化写入缓冲区
+                loop {
+                    let msg_codec_lock = msg_codec.lock();
+
+                    if let Ok(mut msg_codec) = msg_codec_lock {
+                        msg_codec
+                            .write_bytes(&p_message,&mut out_buffer)
+                            .unwrap();
+                        break;
+                    }
+                }
+
+                // 发送消息
+                // 不能在上面循环里直接异步发送，
+                // 锁范围内使用异步会造成重入锁
+                peer_write.write(&out_buffer.get_ref()[..p_message.message_size()]).await;
+                o_send.send(OPeerManagerMessage::SentMessage(p_info, mid)).expect(" send SentMessage fail");
             },
 
             Some(IPeerManagerMessage::RemovePeer(p_info)) => {
-                Ok((None, Some(OPeerManagerMessage::PeerRemoved(p_info)), false))
-            }
-
-            Some(_) => {
-                info!("bittorrent-protocol_peer: Peer Future Received Invalid Message From Peer Manager");
-                Err(())
-            }
-
-            None => Ok((None, Some(OPeerManagerMessage::PeerDisconnect(info)), false)),
-        };
-
-        //result第一项处理
-        let result = match result {
-            Ok((opt_send, opt_ack, is_good)) => {
-                if let Some(peer_write_msg) = opt_send {
-                    out_buffer.set_position(0);
-
-                    //获取锁，消息序列化写入缓冲区
-                    loop {
-                        let msg_codec_lock = msg_codec.lock();
-
-                        if let Ok(mut msg_codec) = msg_codec_lock {
-                            msg_codec
-                                .write_bytes(&peer_write_msg,&mut out_buffer)
-                                .unwrap();
-                            break;
-                        }
-                    }
-
-                    // 发送消息
-                    // 不能在上面循环里直接异步发送，
-                    // 锁范围内使用异步会造成重入锁
-                    peer_write.write(&out_buffer.get_ref()[..peer_write_msg.message_size()]).await;
-
-                    Ok((opt_ack, is_good))
-                } else {
-                    Ok((opt_ack, is_good))
-                }
-            }
-            Err(_err) => Err(()),
-        };
-
-        //result第二项处理
-        let result = match result {
-            Ok((opt_ack, is_good)) => {
-                if let Some(o_peer_manager_msg) = opt_ack {
-                    let _ = o_send.send(o_peer_manager_msg);
-                    Ok(is_good)
-                } else {
-                    // Either we had no recv message (from remote), or it was a keep alive message, which we dont propagate
-                    Ok(is_good)
-                }
-            }
-            _ => Err(()),
-        };
-
-        //result第三项处理
-        match result {
-            Ok(is_good) => {
-                // Connection is good if no errors occurred (we do this so we can use the same plumbing)
-                // for sending "acks" back to our manager when an error occurrs, we just have None, None,
-                // Some, false when we want to send an error message to the manager, but terminate the connection.
-                if !is_good {
-                    break;
-                    //break MergedError::StageThree("草拟马，我要的是处理完后直接退出循环，一直强制我返回一个值，返回你妈呢？")
-                }
-            }
-            _ => {
+                o_send.send(OPeerManagerMessage::PeerRemoved(p_info)).expect(" send PeerRemoved fail");
                 break;
-            }
+            },
+
+            None => {
+                o_send.send(OPeerManagerMessage::PeerDisconnect(info)).expect(" send PeerDisconnect fail");
+                break;
+            },
+            _ => {
+                 log::error!("bittorrent-protocol_peer: Peer Future Received Invalid Message From Peer Manager");
+                 break;
+             },
         }
-    } //loop end
+    }
 }
