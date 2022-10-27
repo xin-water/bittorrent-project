@@ -16,4 +16,9 @@ bytes           = "0.4"
 bit-set         = "0.4"
 rand            = "0.3.0"
 
+[dev-dependencies]
+log4rs          = "1.0.0"
+clap            = "2.33"
+
+
 
