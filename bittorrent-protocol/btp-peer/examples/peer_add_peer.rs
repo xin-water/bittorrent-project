@@ -53,7 +53,7 @@ async fn main() {
 
     match response {
         OPeerManagerMessage::PeerAdded(info) => {
-            info!("PeerAdded \n1: {:?} \n2: {:?}\n", peer_info, info)
+            println!("PeerAdded \n1: {:?} \n2: {:?}\n", peer_info, info);
         }
         _ => panic!("Unexpected First Peer Manager Response"),
     };
@@ -68,7 +68,7 @@ async fn main() {
 
     match response {
         OPeerManagerMessage::PeerRemoved(info) => {
-            info!("PeerRemoved \n1: {:?} \n2: {:?}\n", peer_info, info)
+            println!("PeerRemoved \n1: {:?} \n2: {:?}\n", peer_info, info);
         }
 
         _ => panic!("Unexpected Third Peer Manager Response"),
@@ -90,7 +90,7 @@ fn init_log() {
         .build(
             Root::builder()
                 .appender("stdout")
-                .build(LevelFilter::Trace),
+                .build(LevelFilter::Warn),
         )
         .unwrap();
 
