@@ -9,12 +9,16 @@ use log4rs::{
     filter::threshold::ThresholdFilter,
 };
 use std::io;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tokio::io::AsyncReadExt;
+use tokio::net::{TcpListener, TcpStream};
 use btp_handshake::Extensions;
 use btp_peer::{IPeerManagerMessage, OPeerManagerMessage, PeerInfo, PeerManagerBuilder};
 use btp_util::bt;
 
-fn main() {
+
+#[tokio::main]
+async fn main() {
 
     // Start logger
     init_log();
@@ -26,11 +30,11 @@ fn main() {
 
     // Create two peers
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let tcplisten=TcpListener::bind(&socket).unwrap();
+    let tcplisten=TcpListener::bind(&socket).await.unwrap();
     let listen_addr= tcplisten.local_addr().unwrap();
 
     //模拟远程peer stream
-    let  peer_stream  = TcpStream::connect(&listen_addr).unwrap();
+    let mut peer_stream = TcpStream::connect(&listen_addr).await.unwrap();
 
 
     // 模拟远程peer信息
@@ -42,10 +46,10 @@ fn main() {
     );
 
     // Add peer one to the manager
-    manager.send(IPeerManagerMessage::AddPeer(peer_info, peer_stream));
+    manager.send(IPeerManagerMessage::AddPeer(peer_info, peer_stream)).await;
 
     // Check that peer one was added
-    let response = manager.poll().unwrap();
+    let response = manager.poll().await.unwrap();
 
     match response {
         OPeerManagerMessage::PeerAdded(info) => {
@@ -56,10 +60,10 @@ fn main() {
 
 
     // Remove peer one from the manager
-    manager.send(IPeerManagerMessage::RemovePeer(peer_info));
+    manager.send(IPeerManagerMessage::RemovePeer(peer_info)).await;
 
     // Check that peer one was removed
-    let response = manager.poll().unwrap();
+    let response = manager.poll().await.unwrap();
 
 
     match response {
