@@ -14,15 +14,15 @@ mod peer_task;
 pub mod peer_info;
 
 
-pub(crate) fn start_peer_task<S>(pb:PeerManagerBuilder)->(Sender<IPeerManagerMessage<S>>,UnboundedReceiver<OPeerManagerMessage>)
+pub(crate) fn start_peer_task<S>(build: PeerManagerBuilder)->(Sender<IPeerManagerMessage<S>>,UnboundedReceiver<OPeerManagerMessage>)
 where S: AsyncWrite + AsyncRead + Send + 'static + Debug + Split,
 
 {
 
-    let (command_tx,command_rx) = mpsc::channel(100);
+    let (command_tx,command_rx) = mpsc::channel(build.sink_buffer_capacity());
     let (msg_tx,msg_rx) = mpsc::unbounded_channel();
 
-    let handler= PeerHandler::new(pb.peer_capacity(),command_rx,msg_tx);
+    let handler= PeerHandler::new(build.peer_capacity(),command_rx,msg_tx);
 
     task::spawn(handler.run_task());
 
