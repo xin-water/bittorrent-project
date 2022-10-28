@@ -145,6 +145,17 @@ where S: AsyncRead + AsyncWrite + Send + 'static + Debug + Split,
                 }
 
             }
+
+            IPeerManagerMessage::Shutdown =>{
+                if let Ok(mut peers) = self.peers.try_lock() {
+                    for (info,send) in peers.iter() {
+                        send
+                            .send(IPeerManagerMessage::RemovePeer(*info))
+                            .expect("bittorrent-protocol_peer: Shutdown Failed");
+                    }
+                }
+                self.shutdown();
+            }
         }
 
     }

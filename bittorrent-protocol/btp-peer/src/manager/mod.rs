@@ -162,6 +162,7 @@ pub enum IPeerManagerMessage<S>{
     RemovePeer(PeerInfo),
     /// Send a message to a peer.
     SendMessage(PeerInfo, MessageId, PeerWireProtocolMessage), // TODO: Support querying for statistics
+    Shutdown
 }
 
 /// Message that can be received from the `PeerManager`.
