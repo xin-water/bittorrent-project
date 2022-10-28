@@ -10,6 +10,7 @@ use crate::{PeerWireMessageCodec, MessageCodec};
 use std::sync::{Arc, Mutex};
 use std::borrow::BorrowMut;
 use std::future::Future;
+use std::time::Duration;
 use tokio::io::{AsyncRead,AsyncReadExt, AsyncWrite,AsyncWriteExt};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task;
@@ -63,6 +64,7 @@ where R: AsyncRead + AsyncReadExt + Send + 'static + Unpin,
                 }
                 Ok(0) => {
                     //读到0个数据，重新等待数据
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
                 Ok(bytes_read) => {
@@ -91,7 +93,7 @@ where R: AsyncRead + AsyncReadExt + Send + 'static + Unpin,
                 // todo alive消息解析出错
                 while let Ok(msg) = msg_codec.parse_bytes(Bytes::from(data_slice)) {
                     let message_size = msg.message_size();
-                    info!("[peer loop_read_msg] message_size:{:?}\n",message_size);
+                    log::trace!("[peer loop_read_msg] message_size:{:?}\n",message_size);
 
                     data_slice = &data_slice[message_size..];
                     //data_slice= &(in_buffer.get_mut()[msg.message_size()..read_position].to_vec());
