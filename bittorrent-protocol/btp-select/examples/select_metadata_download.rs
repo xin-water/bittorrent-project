@@ -20,7 +20,7 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::sync::{mpsc, Arc, Mutex};
 use tokio::net::TcpStream;
 
-use btp_handshake::{Extension, Extensions, HandshakerConfig, HandshakerManagerBuilder, HandshakerManagerSink, HandshakerManagerStream, InfoHash, InitiateMessage, PeerId, Protocol};
+use btp_handshake::{Extension, Extensions, HandshakerConfig, HandshakerManagerBuilder, HandshakerManagerSink, HandshakerManagerStream, InfoHash, InHandshake, InitiateMessage, PeerId, Protocol};
 use btp_handshake::transports::TcpTransport;
 use btp_metainfo::Metainfo;
 use btp_peer::messages::builders::ExtendedMessageBuilder;
@@ -36,7 +36,7 @@ async fn main() {
     init_log();
     info!("start run .......");
 
-    let (mut handshaker_send, handshaker_recv, peer_manager_send, peer_manager_recv, uber_module) = create_component().await;
+    let (mut handshaker_send, handshaker_recv, mut peer_manager_send, peer_manager_recv, uber_module) = create_component().await;
 
 
     let task1=tokio::spawn(handshaker_rx_handler(handshaker_recv, peer_manager_send.clone()));
@@ -45,7 +45,9 @@ async fn main() {
 
     let task3=tokio::spawn(select_tick(uber_module.clone()));
 
-    let task4=tokio::spawn(select_rx_handler(uber_module.clone(),peer_manager_send));
+    // 离谱，在这会卡死，发送拓展给peer的时候，peer入站一直收不到消息，通道有消息也会阻塞？
+    // 放当前协程最后执行又不会，想不通
+    //let task4=tokio::spawn(select_rx_handler(uber_module.clone(),peer_manager_send));
 
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -67,19 +69,24 @@ async fn main() {
 
     info!("commit peer handshake ....");
     handshaker_send.send(
-        InitiateMessage::new(
+        InHandshake::Init(
+            InitiateMessage::new(
             Protocol::BitTorrent,
             info_hash,
-            addr.parse().unwrap()
+            addr.parse().unwrap())
         )
     ).await.unwrap();
 
-    // select_rx_handler(uber_module.clone(),peer_manager_send).await;
-    //tokio::time::sleep(Duration::from_secs(10)).await;
+    select_rx_handler(uber_module.clone(),peer_manager_send.clone()).await;
+    handshaker_send.send(InHandshake::Shutdown).await;
+    peer_manager_send.send(IPeerManagerMessage::Shutdown).await;
+    //uber_module.lock().unwrap().send()
     task1.await;
     task2.await;
-    task3.await;
-    task4.await;
+    //永久循环的，不等它
+    //task3.await;
+    //task4.await;
+    println!("run end")
 }
 
 async fn create_component() -> (HandshakerManagerSink, HandshakerManagerStream<TcpStream>, PeerManagerSink<TcpStream>, PeerManagerStream, Arc<Mutex<UberModule>>) {
@@ -167,7 +174,7 @@ async fn select_rx_handler(uber_module: Arc<Mutex<UberModule>>,mut peer_manager_
                         .write_all(&metainfo.to_bytes())
                         .unwrap();
                     info!("种子文件下载完成！\npath:{:?}", "bittorrent-protocol/btp-select/download/metadata.torrent");
-                    break
+                    return;
                 }
                 _ => panic!("[select_rx_handler] Unexpected Message For Uber Module..."),
             }
