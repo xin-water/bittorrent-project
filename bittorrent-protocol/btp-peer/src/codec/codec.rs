@@ -69,3 +69,18 @@ impl MessageCodec for PeerWireMessageCodec
     }
 
 }
+
+#[cfg(test)]
+mod test{
+    use bytes::Bytes;
+    use crate::{MessageCodec, PeerWireMessageCodec};
+    use crate::messages::PeerWireProtocolMessage;
+
+    #[test]
+    fn test_alive_msg(){
+      let alive_data = [0_u8;4];
+       let msg= PeerWireMessageCodec::new().parse_bytes(Bytes::from(&alive_data[..]));
+        assert_eq!(msg.unwrap(),PeerWireProtocolMessage::KeepAlive)
+    }
+
+}

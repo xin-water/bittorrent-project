@@ -53,33 +53,42 @@ where R: AsyncRead + AsyncReadExt + Send + 'static + Unpin,
         {
             read_position = in_buffer.position() as usize;
             let in_slice:&mut [u8] = &mut in_buffer.get_mut()[read_position..];
+            //这个方法读到0个数据也会返回，有点坑，没消息也会一直读。
             let read_result = peer_read.read(in_slice).await;
             match read_result{
-                Ok(bytes_read) => {
-                    read_position += bytes_read;
-                }
                 Err(error) => {
                     //读取出错，可能流已经关闭了，直接返回，结束工作
                     log::error!("peer_read read data error:{:?}",error);
                     return;
                 }
+                Ok(0) => {
+                    //读到0个数据，重新等待数据
+                    continue;
+                }
+                Ok(bytes_read) => {
+                    read_position += bytes_read;
+                }
             }
-
+            //读取数据成功后 修改 字节数量
             in_buffer.set_position(read_position as u64);
         }
 
-
+        if read_position < 4 {
+            // 小于4,说明数据不足一个完整的 bt包
+            continue
+        }
         // Try to parse whatever part of the message we currently have (see if we need to disconnect early)
         let mut data_slice: &[u8] = &in_buffer.get_mut()[..read_position];
 
         loop {
             let me_msg_code_lock = me_msg_codec.lock();
             if let Ok(mut msg_codec) = me_msg_code_lock {
-                log::trace!("[peer loop_read_msg] read read_position:{:?}",read_position);
+                log::trace!("[peer loop_read_msg] in_buffer position:{:?}",read_position);
                 log::trace!("[peer loop_read_msg] msg_head:{:?}",&data_slice[0..4]);
 
-                //此处使用 if let 则在接受到 多个数据时只会解析一个,造成卡顿.
-                //此处使用 while let ,在输入缓冲大时可提高性能,但要处理数据不全时 数据头里记录的长度与读取到的长度不相符而导致的断言异常
+                // 此处使用 if let 则在接受到 多个数据时只会解析一个,造成卡顿.
+                // 此处使用 while let ,在输入缓冲大时可提高性能,但要处理数据不全时 数据头里记录的长度与读取到的长度不相符而导致的断言异常
+                // todo alive消息解析出错
                 while let Ok(msg) = msg_codec.parse_bytes(Bytes::from(data_slice)) {
                     let message_size = msg.message_size();
                     info!("[peer loop_read_msg] message_size:{:?}\n",message_size);
