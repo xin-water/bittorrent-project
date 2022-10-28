@@ -75,14 +75,14 @@ where R: AsyncRead + AsyncReadExt + Send + 'static + Unpin,
         loop {
             let me_msg_code_lock = me_msg_codec.lock();
             if let Ok(mut msg_codec) = me_msg_code_lock {
-                info!("[peer task] read read_position:{:?}",read_position);
-                info!("[peer task] msg_head:{:?}",&data_slice[0..4]);
+                log::trace!("[peer loop_read_msg] read read_position:{:?}",read_position);
+                log::trace!("[peer loop_read_msg] msg_head:{:?}",&data_slice[0..4]);
 
                 //此处使用 if let 则在接受到 多个数据时只会解析一个,造成卡顿.
                 //此处使用 while let ,在输入缓冲大时可提高性能,但要处理数据不全时 数据头里记录的长度与读取到的长度不相符而导致的断言异常
                 while let Ok(msg) = msg_codec.parse_bytes(Bytes::from(data_slice)) {
                     let message_size = msg.message_size();
-                    info!("[peer task] message_size:{:?}\n",message_size);
+                    info!("[peer loop_read_msg] message_size:{:?}\n",message_size);
 
                     data_slice = &data_slice[message_size..];
                     //data_slice= &(in_buffer.get_mut()[msg.message_size()..read_position].to_vec());
@@ -123,7 +123,7 @@ where
         //构造result
          match msg_rx.recv().await {
             Some(IPeerManagerMessage::SendMessage(p_info, mid, p_message)) =>{
-
+                log::trace!("loop_write_msg SendMessage:{:?}",p_message);
                 out_buffer.set_position(0);
 
                 //获取锁，消息序列化写入缓冲区
