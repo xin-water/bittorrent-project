@@ -16,7 +16,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::thread;
 use std::time::Duration;
 
-use btp_handshake::{Extension, Extensions, HandshakerManagerBuilder, InitiateMessage, Protocol};
+use btp_handshake::{Extension, Extensions, HandshakerManagerBuilder, InHandshake, InitiateMessage, Protocol};
 use btp_handshake::transports::{TcpTransport, UtpTransport};
 use btp_util::bt::InfoHash;
 
@@ -62,7 +62,7 @@ async fn main() {
     let hash = InfoHash::from_hex("E5B6BECAFD04BA0A9B7BBE6883A86DEDA731AE3C");
     let addr = "127.0.0.1:33333".parse().expect(" socket parse error");
     handshaker_manager_2
-        .send(InitiateMessage::new(Protocol::BitTorrent, hash, addr))
+        .send(InHandshake::Init(InitiateMessage::new(Protocol::BitTorrent, hash, addr)))
         .await
         .unwrap();
 

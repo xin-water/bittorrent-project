@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use crate::filter::filters::Filters;
 use crate::{CompleteMessage, Extensions, FilterDecision, InitiateMessage, LocalAddr, Protocol, Transport};
 use btp_util::bt::{InfoHash, PeerId};
+use crate::manager::InHandshake;
 
 pub mod handshaker;
 
@@ -18,7 +19,7 @@ pub(crate) async fn srart_handler_task<S,T,L>(
     ext: Extensions,
     transport: T,
     listener:L,
-    command:mpsc::Receiver<InitiateMessage>,
+    command:mpsc::Receiver<InHandshake>,
     sock_send:mpsc::UnboundedSender<CompleteMessage<S>>,
     filters:Filters,
 )
@@ -35,7 +36,7 @@ pub struct HandshakeHandler<S,T,L>{
     filters: Arc<Filters>,
     ext: Extensions,
     pid: PeerId,
-    command_rx: mpsc::Receiver<InitiateMessage>,
+    command_rx: mpsc::Receiver<InHandshake>,
     transport: T,
     listen: L,
     out_msg: mpsc::UnboundedSender<CompleteMessage<S>>
@@ -47,7 +48,7 @@ where S: AsyncRead + AsyncWrite + Send + Unpin + Debug + 'static,
       T: Transport<Socket = S> + Send + std::marker::Sync,
 {
 
-    fn new( pid: PeerId,ext: Extensions,transport: T, listener:L, command:mpsc::Receiver<InitiateMessage>, sock_send:mpsc::UnboundedSender<CompleteMessage<S>>, filters:Filters,) ->Self{
+    fn new( pid: PeerId,ext: Extensions,transport: T, listener:L, command:mpsc::Receiver<InHandshake>, sock_send:mpsc::UnboundedSender<CompleteMessage<S>>, filters:Filters,) ->Self{
 
         HandshakeHandler{
             is_run: true,
@@ -90,8 +91,19 @@ where S: AsyncRead + AsyncWrite + Send + Unpin + Debug + 'static,
     }
 
 
-    pub(crate) async fn handle_command(&mut self, item:InitiateMessage){
+    pub(crate) async fn handle_command(&mut self, item:InHandshake){
 
+        match item {
+            InHandshake::Shutdown => {
+                self.shutdown();
+            }
+            InHandshake::Init(item)=>{
+               self.handle_command_msg(item).await;
+            }
+        }
+    }
+
+    pub(crate) async fn handle_command_msg(&mut self, item:InitiateMessage){
         // 过虑判断，不应该过虑就发起链接
         if !should_filter(Some(item.address()),
                           Some(item.protocol()),

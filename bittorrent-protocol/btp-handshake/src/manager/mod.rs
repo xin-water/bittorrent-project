@@ -26,107 +26,16 @@ use crate::filter::{HandshakeFilter, HandshakeFilters};
 
 use crate::handler;
 use crate::handler::srart_handler_task;
+pub use crate::manager::build::HandshakerManagerBuilder;
 
 pub mod config;
 pub mod out_msg;
 pub mod in_msg;
+pub mod build;
 pub mod discovery;
 
 use self::config::HandshakerConfig;
-const DEFAULT_V4_PORT: u16 = 22222;
-const DEFAULT_V4_ADDR: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 
-/// Build configuration for `Handshaker` object creation.
-#[derive(Copy, Clone)]
-pub struct HandshakerManagerBuilder {
-    bind: SocketAddr,
-    port: u16,
-    pid: PeerId,
-    ext: Extensions,
-    config: HandshakerConfig,
-}
-
-impl HandshakerManagerBuilder {
-    /// Create a new `HandshakerBuilder`.
-    pub fn new() -> HandshakerManagerBuilder {
-
-        let default_sock_addr = SocketAddr::V4(SocketAddrV4::new(DEFAULT_V4_ADDR, DEFAULT_V4_PORT));
-
-        let seed = rand::thread_rng().next_u32();
-        let default_peer_id = PeerId::from_bytes(&convert::four_bytes_to_array(seed));
-
-        HandshakerManagerBuilder {
-            bind: default_sock_addr,
-            port: DEFAULT_V4_PORT,
-            pid: default_peer_id,
-            ext: Extensions::new(),
-            config: HandshakerConfig::default(),
-        }
-    }
-
-    /// Address that the host will listen on.
-    ///
-    /// Defaults to IN_ADDR_ANY using port 0 (any free port).
-    pub fn with_bind_addr(&mut self, addr: SocketAddr) -> &mut HandshakerManagerBuilder {
-        self.bind = addr;
-
-        self
-    }
-
-    pub fn with_bind_port(&mut self, bind_port: u16) -> &mut HandshakerManagerBuilder {
-        self.bind = SocketAddr::V4(SocketAddrV4::new(DEFAULT_V4_ADDR, bind_port));
-
-        self
-    }
-
-    /// Port that external peers should connect on.
-    ///
-    /// Defaults to the port that is being listened on (will only work if the
-    /// host is not natted).
-    pub fn with_open_port(&mut self, port: u16) -> &mut HandshakerManagerBuilder {
-        self.port = port;
-
-        self
-    }
-
-    /// Peer id that will be advertised when handshaking with other peers.
-    ///
-    /// Defaults to a random SHA-1 hash; official clients should use an encoding scheme.
-    ///
-    /// See http://www.bittorrent.org/beps/bep_0020.html.
-    pub fn with_peer_id(&mut self, peer_id: PeerId) -> &mut HandshakerManagerBuilder {
-        self.pid = peer_id;
-
-        self
-    }
-
-    /// Extensions supported by our client, advertised to the peer when handshaking.
-    pub fn with_extensions(&mut self, ext: Extensions) -> &mut HandshakerManagerBuilder {
-        self.ext = ext;
-
-        self
-    }
-
-    /// Configuration that will be used to alter the internal behavior of handshaking.
-    ///
-    /// This will typically not need to be set unless you know what you are doing.
-    pub fn with_config(&mut self, config: HandshakerConfig) -> &mut HandshakerManagerBuilder {
-        self.config = config;
-
-        self
-    }
-
-    /// Build a `Handshaker` over the given `Transport` with a `Remote` instance.
-    pub async fn build<T>(&self, transport: T) -> io::Result<HandshakerManager<T::Socket>>
-        where
-            T: Transport + 'static + Send + Sync + Debug,
-            <T as Transport>::Socket: Send,
-    {
-        HandshakerManager::with_builder(self, transport).await
-    }
-}
-
-//----------------------------------------------------------------------------------//
 
 /// Handshaker which is both `Stream` and `Sink`.
 pub struct HandshakerManager<S> {
@@ -198,8 +107,8 @@ impl<S> HandshakerManager<S> {
 
    pub async fn send(
         &mut self,
-        item: InitiateMessage,
-    ) ->  Result<(), SendError<InitiateMessage>> {
+        item: InHandshake,
+    ) ->  Result<(), SendError<InHandshake>> {
         self.sink.send(item).await
     }
 
@@ -237,7 +146,7 @@ impl<S> HandshakeFilters for HandshakerManager<S> {
 /// `Sink` portion of the `Handshaker` for initiating handshakes.
 #[derive(Clone)]
 pub struct HandshakerManagerSink {
-    send: mpsc::Sender<InitiateMessage>,
+    send: mpsc::Sender<InHandshake>,
     port: u16,
     pid: PeerId,
     filters: Filters,
@@ -245,7 +154,7 @@ pub struct HandshakerManagerSink {
 
 impl HandshakerManagerSink {
     fn new(
-        send: mpsc::Sender<InitiateMessage>,
+        send: mpsc::Sender<InHandshake>,
         port: u16,
         pid: PeerId,
         filters: Filters,
@@ -273,8 +182,8 @@ impl  HandshakerManagerSink {
 
    pub async fn send(
         &mut self,
-        item: InitiateMessage,
-    ) -> Result<(), SendError<InitiateMessage>> {
+        item: InHandshake,
+    ) -> Result<(), SendError<InHandshake>> {
 
         self.send.send(item).await
     }
@@ -319,5 +228,11 @@ impl<S>  HandshakerManagerStream<S> {
    pub async fn poll(&mut self) -> Option<CompleteMessage<S>> {
         self.recv.recv().await
     }
+}
+
+#[derive(Debug)]
+pub enum InHandshake{
+    Shutdown,
+    Init(InitiateMessage)
 }
 

@@ -15,6 +15,7 @@ mod message;
 pub use manager::out_msg::CompleteMessage;
 pub use message::extensions::{Extension, Extensions};
 pub use manager::in_msg::InitiateMessage;
+pub use manager::InHandshake;
 pub use message::protocol::Protocol;
 
 /// Built in objects implementing `Transport`.
